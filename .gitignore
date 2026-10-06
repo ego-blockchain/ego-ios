@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+EgoWallet.xcodeproj/
+build/
+xcodegen/
+xcodegen.zip
+.DS_Store
