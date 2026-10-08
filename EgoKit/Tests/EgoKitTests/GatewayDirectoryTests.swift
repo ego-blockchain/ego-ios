@@ -309,6 +309,33 @@ final class GatewayDirectoryTests: XCTestCase {
         XCTAssertEqual(gateway, nearby, "it gets another chance after a minute")
     }
 
+    func testThePhoneFindsTheComputerThatUsesItsWallet() async throws {
+        let me = EgoKey.generate()
+        let mine = try announcement(me, ip: "8.8.4.4", ts: 1_800_000_000)
+        let other = try announcement(EgoKey.generate(), ip: "1.1.1.1", ts: 1_800_000_000)
+        let directory = GatewayDirectory(
+            store: MemoryStore([
+                CachedGateway(announcement: other, lastOK: 1_799_999_000, failures: 0),
+                CachedGateway(announcement: mine, lastOK: nil, failures: 0),
+            ]),
+            probe: { _ in true },
+            fetchBootstrap: { [] },
+            exchange: { _ in [] },
+            localProbe: { _ in true },
+            clock: { 1_800_000_000 }
+        )
+        var own = await directory.gateways(runBy: me.address)
+        XCTAssertEqual(own.map(\.endpoint.absoluteString), [mine.endpoint])
+        let nearby = Gateway(endpoint: URL(string: "https://192.168.1.20:47398/rpc")!, certSha256: cert, node: me.address)
+        let neighbour = Gateway(endpoint: URL(string: "https://192.168.1.21:47398/rpc")!, certSha256: cert, node: "egot1someoneelse")
+        await directory.setLocal([neighbour, nearby])
+        own = await directory.gateways(runBy: me.address)
+        XCTAssertEqual(own.first, nearby, "the computer on the same Wi-Fi comes first")
+        XCTAssertEqual(own.count, 2)
+        let none = await directory.gateways(runBy: "")
+        XCTAssertTrue(none.isEmpty)
+    }
+
     func testLosingTheLocalGatewayMovesBackToTheInternet() async throws {
         let counter = Counter()
         let saved = try announcement(EgoKey.generate(), ip: "8.8.4.4", ts: 1_800_000_000)

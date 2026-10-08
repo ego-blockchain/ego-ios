@@ -199,4 +199,64 @@ final class MarketModelTests: XCTestCase {
         XCTAssertEqual(Fiat.all.count, 18)
         XCTAssertEqual(Set(Fiat.all.map(\.code)).count, 18)
     }
+
+    func testTheAssetListMatchesEgoDesktop() {
+        XCTAssertEqual(MarketAssets.all.count, 16)
+        XCTAssertEqual(MarketAssets.all.first?.id, "EGOC")
+        XCTAssertEqual(MarketAssets.meta("USDT-TRC20").label, "USDT on Tron · TRC-20")
+        XCTAssertEqual(MarketAssets.meta("EGOC").label, "EGOC")
+        XCTAssertEqual(MarketAssets.meta("ETH").group, .coins)
+        XCTAssertEqual(MarketAssets.meta("USDC-SPL").group, .stablecoins)
+    }
+
+    func testMarketLinkedPricesOnlyExistForEgocInUsd() throws {
+        func offer(asset: String, fiat: String, price: String) throws -> MarketOffer {
+            let json = """
+            {"id":"o","maker":"egot1x","side":"sell","asset":"\(asset)","fiat":"\(fiat)","price":\(price),
+             "min_micro":1000000,"max_micro":5000000,"methods":[],"country":null,"terms":"",
+             "payment_window_secs":1800,"created_at":0,"expires_at":0}
+            """
+            return try JSONDecoder().decode(MarketOffer.self, from: Data(json.utf8))
+        }
+        XCTAssertEqual(try offer(asset: "EGOC", fiat: "USD", price: #"{"margin_bps":100}"#).unitPriceMicro(egocUsd: 0.5), 505_000)
+        XCTAssertNil(try offer(asset: "EGOC", fiat: "EUR", price: #"{"margin_bps":100}"#).unitPriceMicro(egocUsd: 0.5))
+        XCTAssertNil(try offer(asset: "ETH", fiat: "USD", price: #"{"margin_bps":100}"#).unitPriceMicro(egocUsd: 0.5))
+        XCTAssertEqual(try offer(asset: "ETH", fiat: "EUR", price: #"{"fixed":2400000000}"#).unitPriceMicro(egocUsd: 0.5), 2_400_000_000)
+    }
+
+    func testMarketParamsDecodeFromTheGateway() throws {
+        let json = #"{"active":true,"escrow_held_uegoc":12500000,"active_trades":3,"maker_fee_bps":100}"#
+        let params = try JSONDecoder().decode(MarketParams.self, from: Data(json.utf8))
+        XCTAssertEqual(params, try JSONDecoder().decode(MarketParams.self, from: Data(json.utf8)))
+        XCTAssertTrue(params.active)
+        XCTAssertEqual(params.escrowHeldUegoc, 12_500_000)
+        XCTAssertEqual(params.activeTrades, 3)
+    }
+}
+
+final class EarningsTests: XCTestCase {
+    func testTheEarningsRequestIsSignedTheWayEgoDesktopChecksIt() throws {
+        XCTAssertEqual(NodeEarningsRequest.signingBytes(address: "egot1abc", ts: 5), Array("ego/node-earnings/v1\negot1abc\n5".utf8))
+        let key = EgoKey.generate()
+        let bytes = NodeEarningsRequest.signingBytes(address: key.address, ts: 1_800_000_000)
+        XCTAssertTrue(EgoKey.verify(signature: try key.sign(bytes), message: bytes, publicKey: key.publicKey))
+    }
+
+    func testNodeEarningsDecodeFromEgoDesktop() throws {
+        let json = """
+        {"address":"egot1me","now":1800000100,"storage_allocated_bytes":50000000000,"drs_score":61.5,
+         "is_validator":false,"compute_enabled":true,
+         "compute":{"total_uegoc":4000000,"jobs_completed":2,"avg_per_job_uegoc":2000000,"last_24h_uegoc":1000000},
+         "earnings":{"daily_rewards":3200000,"epoch_rewards":22400000,"total_earned":91000000,"drs_multiplier":1.115,
+           "reward_breakdown":{"storage_rewards":100000,"consensus_rewards":2000000,"coverage_rewards":1500000,"retrieval_rewards":30000},
+           "pending_rewards":4166,"session_started":1800000000,"coverage_online":true,"reward_suspended_until":null}}
+        """
+        let node = try JSONDecoder().decode(NodeEarnings.self, from: Data(json.utf8))
+        XCTAssertEqual(node.earnings.dailyRewards, 3_200_000)
+        XCTAssertEqual(node.earnings.rewardBreakdown.consensusRewards, 2_000_000)
+        XCTAssertNil(node.earnings.rewardSuspendedUntil)
+        XCTAssertEqual(node.compute?.last24hUegoc, 1_000_000)
+        let rewards = try JSONDecoder().decode(RewardsSummary.self, from: Data(#"{"total_uegoc":91000000,"last_24h_uegoc":3200000,"last_7d_uegoc":22000000,"count":40,"last_at":null,"now":1}"#.utf8))
+        XCTAssertEqual(rewards.count, 40)
+    }
 }

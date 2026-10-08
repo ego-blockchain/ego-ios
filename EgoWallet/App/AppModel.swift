@@ -167,6 +167,38 @@ final class AppModel: ObservableObject {
         return hash
     }
 
+    enum NodeLookup {
+        case found(NodeEarnings)
+        case notFound
+        case unreachable(String)
+    }
+
+    /// The Earnings page of the Ego Desktop that uses this wallet, asked
+    /// directly from that computer. Other gateways can't answer it.
+    func myNodeEarnings() async -> NodeLookup {
+        guard let key else { return .unreachable(message(for: WalletError.locked)) }
+        var own = await directory.gateways(runBy: key.address)
+        if own.isEmpty, let more = try? await perform({ try await $0.gatewayList() }) {
+            await directory.merge(more)
+            own = await directory.gateways(runBy: key.address)
+        }
+        guard !own.isEmpty else { return .notFound }
+        var problem = ""
+        for gateway in own.prefix(3) {
+            do {
+                return .found(try await GatewayClient(gateway: gateway, timeout: 8).nodeEarnings(key: key))
+            } catch {
+                problem = message(for: error)
+            }
+        }
+        return .unreachable(problem)
+    }
+
+    func rewards() async throws -> RewardsSummary {
+        let address = self.address
+        return try await perform { try await $0.rewards(of: address) }
+    }
+
     func deleteWallet() {
         vault.delete()
         key = nil

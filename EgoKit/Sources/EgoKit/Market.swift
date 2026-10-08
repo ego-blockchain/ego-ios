@@ -225,10 +225,125 @@ public enum Fiat {
     }
 }
 
+/// The coins the P2P market trades, in the order Ego Desktop lists them.
+public struct MarketAsset: Identifiable, Hashable, Sendable {
+    public enum Group: String, CaseIterable, Sendable {
+        case ego = "Ego"
+        case stablecoins = "Stablecoins"
+        case coins = "Coins"
+    }
+
+    public let id: String
+    public let symbol: String
+    public let chain: String
+    public let digits: Int
+
+    public var group: Group {
+        if id == "EGOC" { return .ego }
+        return symbol == "USDT" || symbol == "USDC" ? .stablecoins : .coins
+    }
+
+    /// "EGOC", or "USDT on Tron · TRC-20".
+    public var label: String {
+        group == .ego ? symbol : "\(symbol) on \(chain)"
+    }
+}
+
+public enum MarketAssets {
+    public static let all: [MarketAsset] = [
+        .init(id: "EGOC", symbol: "EGOC", chain: "Ego", digits: 2),
+        .init(id: "USDT-TRC20", symbol: "USDT", chain: "Tron · TRC-20", digits: 2),
+        .init(id: "USDT-ERC20", symbol: "USDT", chain: "Ethereum · ERC-20", digits: 2),
+        .init(id: "USDT-BEP20", symbol: "USDT", chain: "BNB Chain · BEP-20", digits: 2),
+        .init(id: "USDT-POLYGON", symbol: "USDT", chain: "Polygon", digits: 2),
+        .init(id: "USDC-ERC20", symbol: "USDC", chain: "Ethereum · ERC-20", digits: 2),
+        .init(id: "USDC-BEP20", symbol: "USDC", chain: "BNB Chain · BEP-20", digits: 2),
+        .init(id: "USDC-POLYGON", symbol: "USDC", chain: "Polygon", digits: 2),
+        .init(id: "ETH", symbol: "ETH", chain: "Ethereum", digits: 6),
+        .init(id: "BNB", symbol: "BNB", chain: "BNB Chain", digits: 6),
+        .init(id: "TRX", symbol: "TRX", chain: "Tron", digits: 2),
+        .init(id: "POL", symbol: "POL", chain: "Polygon", digits: 4),
+        .init(id: "USDC-SPL", symbol: "USDC", chain: "Solana", digits: 2),
+        .init(id: "USDT-SPL", symbol: "USDT", chain: "Solana", digits: 2),
+        .init(id: "SOL", symbol: "SOL", chain: "Solana", digits: 4),
+        .init(id: "ADA", symbol: "ADA", chain: "Cardano", digits: 2),
+    ]
+
+    public static func meta(_ id: String) -> MarketAsset {
+        all.first { $0.id == id } ?? MarketAsset(id: id, symbol: id, chain: id, digits: 2)
+    }
+
+    /// An amount in the asset's micro-units, as Ego Desktop prints it: at least
+    /// two decimals (fewer if the asset has fewer), at most the asset's own.
+    public static func number(_ micro: UInt64, asset: String) -> String {
+        let digits = meta(asset).digits
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = min(digits, 2)
+        formatter.maximumFractionDigits = digits
+        let value = Double(micro) / 1_000_000
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
+    public static func amount(_ micro: UInt64, asset: String) -> String {
+        "\(number(micro, asset: asset)) \(meta(asset).symbol)"
+    }
+}
+
+/// The market-wide numbers at the top of Ego Desktop's P2P Trade page.
+public struct MarketParams: Decodable, Equatable, Sendable {
+    public let active: Bool
+    public let escrowHeldUegoc: UInt64
+    public let activeTrades: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case active
+        case escrowHeldUegoc = "escrow_held_uegoc"
+        case activeTrades = "active_trades"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? false
+        escrowHeldUegoc = try c.decodeIfPresent(UInt64.self, forKey: .escrowHeldUegoc) ?? 0
+        activeTrades = try c.decodeIfPresent(UInt64.self, forKey: .activeTrades) ?? 0
+    }
+}
+
+extension MarketOffer {
+    /// The price per coin in the offer's fiat, worked out like Ego Desktop's
+    /// backend: a market-linked price follows the EGOC/USD price and exists
+    /// only for EGOC offers in USD.
+    public func unitPriceMicro(egocUsd: Double) -> UInt64? {
+        if case .marginBps = price, asset != "EGOC" { return nil }
+        return price.unitMicro(fiat: fiat, egocUsd: egocUsd)
+    }
+}
+
 extension GatewayClient {
-    public func marketOffers(asset: String = "EGOC", fiat: String = "USD", side: MarketSide, limit: Int = 50, cursor: String? = nil) async throws -> OfferPage {
-        struct Params: Encodable { let asset: String; let fiat: String; let side: String; let limit: Int; let cursor: String? }
-        return try await call("market.offers", Params(asset: asset, fiat: fiat, side: side.rawValue, limit: limit, cursor: cursor))
+    public func marketOffers(
+        asset: String = "EGOC",
+        fiat: String = "USD",
+        side: MarketSide,
+        method: String? = nil,
+        amountMicro: UInt64? = nil,
+        limit: Int = 50,
+        cursor: String? = nil
+    ) async throws -> OfferPage {
+        struct Params: Encodable {
+            let asset: String
+            let fiat: String
+            let side: String
+            let method: String?
+            let amount_micro: UInt64?
+            let limit: Int
+            let cursor: String?
+        }
+        return try await call("market.offers", Params(asset: asset, fiat: fiat, side: side.rawValue, method: method, amount_micro: amountMicro, limit: limit, cursor: cursor))
+    }
+
+    public func marketParams() async throws -> MarketParams {
+        try await call("market.params", Empty())
     }
 
     public func egocPriceUsd() async throws -> Double {

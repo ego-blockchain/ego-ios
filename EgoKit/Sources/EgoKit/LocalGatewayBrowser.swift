@@ -58,9 +58,11 @@ public final class LocalGatewayBrowser: @unchecked Sendable {
                   let pin = txt["cert"]?.lowercased(),
                   pin.count == 64, pin.allSatisfy(\.isHexDigit)
             else { continue }
+            let node = txt["node"] ?? ""
             seen.insert(name)
-            if resolved[name]?.certSha256 == pin || pending[name] != nil { continue }
-            resolve(name: name, endpoint: result.endpoint, pin: pin)
+            if let known = resolved[name], known.certSha256 == pin, known.node == node { continue }
+            if pending[name] != nil { continue }
+            resolve(name: name, endpoint: result.endpoint, pin: pin, node: node)
         }
         for name in resolved.keys where !seen.contains(name) {
             resolved[name] = nil
@@ -72,7 +74,7 @@ public final class LocalGatewayBrowser: @unchecked Sendable {
         publish()
     }
 
-    private func resolve(name: String, endpoint: NWEndpoint, pin: String) {
+    private func resolve(name: String, endpoint: NWEndpoint, pin: String, node: String) {
         let parameters = NWParameters.tcp
         if let ip = parameters.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
             ip.version = .v4
@@ -86,7 +88,7 @@ public final class LocalGatewayBrowser: @unchecked Sendable {
                 if case let .hostPort(host, port)? = connection.currentPath?.remoteEndpoint,
                    case let .ipv4(address) = host,
                    let url = URL(string: "https://\(address.rawValue.map(String.init).joined(separator: ".")):\(port.rawValue)/rpc") {
-                    self.resolved[name] = Gateway(endpoint: url, certSha256: pin, node: "")
+                    self.resolved[name] = Gateway(endpoint: url, certSha256: pin, node: node)
                 }
                 connection.cancel()
             case .waiting, .failed:

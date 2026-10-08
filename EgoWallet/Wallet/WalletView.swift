@@ -12,6 +12,7 @@ struct WalletView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     balanceCard
+                    EarningsCard()
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
                     }

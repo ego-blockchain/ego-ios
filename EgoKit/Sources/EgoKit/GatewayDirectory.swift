@@ -186,6 +186,18 @@ public actor GatewayDirectory {
         }
     }
 
+    /// Gateways run by the computer that uses this wallet: nearby ones first,
+    /// then ones it announced on the internet. Only these can show the
+    /// computer's own Earnings page.
+    public func gateways(runBy node: String) -> [Gateway] {
+        guard !node.isEmpty else { return [] }
+        let nearby = local.filter { $0.node == node }
+        let remote = ranked()
+            .filter { $0.announcement.node == node }
+            .compactMap(\.announcement.gateway)
+        return nearby + remote.filter { r in !nearby.contains { $0.endpoint == r.endpoint } }
+    }
+
     public func client() async throws -> GatewayClient {
         if let currentLocal {
             return GatewayClient(gateway: currentLocal)
