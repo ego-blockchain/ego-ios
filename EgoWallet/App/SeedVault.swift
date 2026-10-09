@@ -6,12 +6,14 @@ enum VaultError: LocalizedError {
     case keychain(OSStatus)
     case cancelled
     case noPasscode
+    case missing
 
     var errorDescription: String? {
         switch self {
         case .keychain(let status): return "The iPhone keychain refused the request (code \(status))."
         case .cancelled: return "Unlock was cancelled."
         case .noPasscode: return "Set a passcode on this iPhone first. Ego Wallet keeps your recovery key behind it."
+        case .missing: return "This iPhone no longer has your wallet's key. iOS deletes it if the passcode is turned off. Your coins are safe: restore the wallet with its 24 words or raw seed."
         }
     }
 }
@@ -72,6 +74,8 @@ struct SeedVault {
                     continuation.resume(returning: [UInt8](data))
                 } else if status == errSecUserCanceled {
                     continuation.resume(throwing: VaultError.cancelled)
+                } else if status == errSecItemNotFound {
+                    continuation.resume(throwing: VaultError.missing)
                 } else {
                     continuation.resume(throwing: VaultError.keychain(status))
                 }

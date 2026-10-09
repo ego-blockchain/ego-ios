@@ -69,10 +69,15 @@ struct LockView: View {
                 ProblemBanner(text: problem)
             }
             Spacer()
-            Button("Unlock") {
-                Task { await model.unlock() }
+            if model.seedMissing {
+                Button("Restore wallet") { model.deleteWallet() }
+                    .buttonStyle(PrimaryButtonStyle())
+            } else {
+                Button("Unlock") {
+                    Task { await model.unlock() }
+                }
+                .buttonStyle(PrimaryButtonStyle())
             }
-            .buttonStyle(PrimaryButtonStyle())
         }
         .padding(24)
         .screenBackground()

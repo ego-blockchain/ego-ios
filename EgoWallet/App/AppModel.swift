@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var history: [HistoryItem] = []
     @Published var gatewayHost: String?
     @Published var problem: String?
+    @Published var seedMissing = false
     @Published var refreshing = false
     @Published private(set) var online = true
 
@@ -115,6 +116,9 @@ final class AppModel: ObservableObject {
             await refresh()
         } catch VaultError.cancelled {
             problem = nil
+        } catch VaultError.missing {
+            seedMissing = true
+            problem = message(for: VaultError.missing)
         } catch {
             problem = message(for: error)
         }
@@ -206,6 +210,7 @@ final class AppModel: ObservableObject {
         balance = nil
         history = []
         problem = nil
+        seedMissing = false
         phase = .onboarding
     }
 
