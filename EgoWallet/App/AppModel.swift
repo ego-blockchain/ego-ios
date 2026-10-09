@@ -27,6 +27,16 @@ final class AppModel: ObservableObject {
     @Published var address = ""
     @Published var balance: UInt64?
     @Published var history: [HistoryItem] = []
+    /// The gateway returns the newest transactions up to a limit, with no way
+    /// to skip ahead, so older pages are reached by asking for more.
+    @Published private(set) var historyLimit = AppModel.historyStep
+    static let historyStep = 50
+    static let historyMax = 500
+
+    /// Whether the gateway may have transactions older than the ones loaded.
+    var mayHaveOlderHistory: Bool {
+        history.count >= historyLimit && historyLimit < AppModel.historyMax
+    }
     @Published var gatewayHost: String?
     @Published var problem: String?
     @Published var seedMissing = false
@@ -142,7 +152,8 @@ final class AppModel: ObservableObject {
         let address = self.address
         do {
             balance = try await perform { try await $0.balance(of: address).uegoc }
-            history = try await perform { try await $0.history(of: address, limit: 50) }
+            let limit = historyLimit
+            history = try await perform { try await $0.history(of: address, limit: limit) }
             problem = nil
         } catch {
             problem = message(for: error)
@@ -203,12 +214,19 @@ final class AppModel: ObservableObject {
         return try await perform { try await $0.rewards(of: address) }
     }
 
+    func loadOlderHistory() async {
+        guard mayHaveOlderHistory else { return }
+        historyLimit = min(historyLimit + AppModel.historyStep, AppModel.historyMax)
+        await refresh()
+    }
+
     func deleteWallet() {
         vault.delete()
         key = nil
         address = ""
         balance = nil
         history = []
+        historyLimit = AppModel.historyStep
         problem = nil
         seedMissing = false
         phase = .onboarding

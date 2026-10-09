@@ -16,23 +16,7 @@ struct WalletView: View {
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
                     }
-                    SectionLabel(text: "Activity")
-                    if model.history.isEmpty {
-                        Text(model.refreshing ? "Loading…" : "No transactions yet.")
-                            .foregroundStyle(Brand.muted)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .card()
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(model.history) { item in
-                                ActivityRow(item: item, me: model.address)
-                                if item.id != model.history.last?.id {
-                                    Divider().overlay(Brand.line)
-                                }
-                            }
-                        }
-                        .card()
-                    }
+                    ActivitySection()
                 }
                 .padding(16)
             }
@@ -76,6 +60,111 @@ struct WalletView: View {
             }
         }
         .card()
+    }
+}
+
+/// The wallet's transactions a page at a time, 5, 10 or 50 to a page.
+struct ActivitySection: View {
+    static let pageSizes = [5, 10, 50]
+
+    @EnvironmentObject private var model: AppModel
+    @AppStorage("ego.activity.pageSize") private var pageSize = 10
+    @State private var page = 0
+    @State private var loadingOlder = false
+
+    private var size: Int { ActivitySection.pageSizes.contains(pageSize) ? pageSize : 10 }
+    private var pageCount: Int { max(1, (model.history.count + size - 1) / size) }
+    private var shown: ArraySlice<HistoryItem> {
+        let start = min(page * size, model.history.count)
+        return model.history[start..<min(start + size, model.history.count)]
+    }
+    private var hasOlder: Bool { page + 1 < pageCount || model.mayHaveOlderHistory }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                SectionLabel(text: "Activity")
+                Spacer()
+                Picker("Per page", selection: $pageSize) {
+                    ForEach(ActivitySection.pageSizes, id: \.self) { Text("\($0)").tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 150)
+            }
+            if model.history.isEmpty {
+                Text(model.refreshing ? "Loading…" : "No transactions yet.")
+                    .foregroundStyle(Brand.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card()
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(shown) { item in
+                        ActivityRow(item: item, me: model.address)
+                        if item.id != shown.last?.id {
+                            Divider().overlay(Brand.line)
+                        }
+                    }
+                }
+                .card()
+                if page > 0 || hasOlder {
+                    pager
+                }
+            }
+        }
+        .onChange(of: pageSize) { _, _ in page = 0 }
+        .onChange(of: model.history.count) { _, _ in page = min(page, pageCount - 1) }
+    }
+
+    private var pager: some View {
+        HStack {
+            Button {
+                page -= 1
+            } label: {
+                Label("Newer", systemImage: "chevron.left")
+            }
+            .disabled(page == 0)
+            Spacer()
+            Text("\(page * size + 1)–\(page * size + shown.count) of \(model.history.count)\(model.mayHaveOlderHistory ? "+" : "")")
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(Brand.muted)
+                .monospacedDigit()
+            Spacer()
+            Button {
+                Task { await older() }
+            } label: {
+                if loadingOlder {
+                    ProgressView()
+                } else {
+                    Label("Older", systemImage: "chevron.right").labelStyle(TrailingIconLabelStyle())
+                }
+            }
+            .disabled(!hasOlder || loadingOlder)
+        }
+        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+        .padding(.horizontal, 4)
+    }
+
+    private func older() async {
+        if page + 1 < pageCount {
+            page += 1
+            return
+        }
+        loadingOlder = true
+        let before = model.history.count
+        await model.loadOlderHistory()
+        loadingOlder = false
+        if model.history.count > before {
+            page += 1
+        }
+    }
+}
+
+struct TrailingIconLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.title
+            configuration.icon
+        }
     }
 }
 
