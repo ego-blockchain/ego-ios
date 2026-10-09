@@ -157,18 +157,16 @@ struct Empty: Codable {}
 public final class GatewayClient {
     public let gateway: Gateway
     private let session: URLSession
+    private let timeout: TimeInterval
     private var nextId = 1
     private let lock = NSLock()
 
     public init(gateway: Gateway, timeout: TimeInterval = 20) {
         self.gateway = gateway
+        self.timeout = timeout
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = timeout
-        #if canImport(Security)
-        self.session = URLSession(configuration: config, delegate: PinningDelegate(pin: gateway.certSha256), delegateQueue: nil)
-        #else
         self.session = URLSession(configuration: config)
-        #endif
     }
 
     private func requestId() -> Int {
@@ -204,7 +202,12 @@ public final class GatewayClient {
     }
 
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        try await withCheckedThrowingContinuation { continuation in
+        #if canImport(Network)
+        if let pin = gateway.certSha256 {
+            return try await PinnedHTTP.send(request, pin: pin, timeout: timeout)
+        }
+        #endif
+        return try await withCheckedThrowingContinuation { continuation in
             let task = session.dataTask(with: request) { data, response, error in
                 if let error {
                     continuation.resume(throwing: GatewayError.unreachable(error.localizedDescription))
@@ -262,37 +265,3 @@ public enum CertificatePin {
         Hex.encode(Array(SHA256.hash(data: Data(der))))
     }
 }
-
-#if canImport(Security)
-import Security
-
-final class PinningDelegate: NSObject, URLSessionDelegate {
-    private let pin: String?
-
-    init(pin: String?) {
-        self.pin = pin?.lowercased()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        didReceive challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
-    ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let trust = challenge.protectionSpace.serverTrust,
-              let pin
-        else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
-              let leaf = chain.first,
-              CertificatePin.sha256(of: Array(SecCertificateCopyData(leaf) as Data)) == pin
-        else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-        completionHandler(.useCredential, URLCredential(trust: trust))
-    }
-}
-#endif
