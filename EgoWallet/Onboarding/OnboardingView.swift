@@ -146,16 +146,16 @@ struct ImportWalletView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             } header: {
-                Text("Your 24-word recovery phrase")
+                Text("Recovery phrase or raw seed")
             } footer: {
-                Text("The same words you use in Ego Desktop or the browser extension, separated by spaces.")
+                Text("Your 24 words, separated by spaces, or the Raw Seed (hex) from Ego Desktop's recovery screen: 64 characters, with or without the spaces.")
             }
             if let problem {
                 Section { Text(problem).foregroundStyle(Brand.danger) }
             }
             Section {
                 Button("Restore wallet") { restore() }
-                    .disabled(text.split(whereSeparator: { $0.isWhitespace }).count != Mnemonic.wordCount)
+                    .disabled(!RecoveryInput.looksComplete(text))
             }
         }
         .scrollContentBackground(.hidden)
@@ -165,13 +165,22 @@ struct ImportWalletView: View {
     }
 
     private func restore() {
-        let words = text.split(whereSeparator: { $0.isWhitespace }).map { $0.lowercased() }
-        if let unknown = words.first(where: { !Mnemonic.isWord($0) }) {
+        let key: EgoKey
+        switch RecoveryInput.seed(from: text) {
+        case .success(let seed):
+            guard let made = try? EgoKey(seed: seed) else {
+                problem = "That seed can't be used. Check it against Ego Desktop."
+                return
+            }
+            key = made
+        case .failure(.unknownWord(let unknown)):
             problem = "\"\(unknown)\" isn't one of the recovery words. Check the spelling."
             return
-        }
-        guard let seed = Mnemonic.seed(from: words), let key = try? EgoKey(seed: seed) else {
+        case .failure(.invalidPhrase):
             problem = "These words don't form a valid phrase. Check the order and spelling."
+            return
+        case .failure(.invalidSeed):
+            problem = "A raw seed is 64 characters, 0–9 and a–f. Check it against Ego Desktop."
             return
         }
         do {
