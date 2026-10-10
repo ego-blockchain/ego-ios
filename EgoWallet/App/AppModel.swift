@@ -28,6 +28,10 @@ final class AppModel: ObservableObject {
     @Published var balance: UInt64?
     /// EGUSD credits (cents). Nil until a gateway that knows them answers.
     @Published var credits: UInt64?
+    /// Coins on other chains, at the addresses Ego Desktop derives from the same seed.
+    @Published var externalAssets: [ExternalAsset] = []
+    @Published var externalBalances: [String: ExternalBalance] = [:]
+    @Published var externalProblems: [String: String] = [:]
     @Published var history: [HistoryItem] = []
     /// The gateway returns the newest transactions up to a limit, with no way
     /// to skip ahead, so older pages are reached by asking for more.
@@ -275,6 +279,41 @@ final class AppModel: ObservableObject {
     static let notHere = -32601
     static let notHereTries = 4
 
+    /// Works out the other-chain addresses (once per unlock) and asks each
+    /// chain's public service for its balance, all at the same time.
+    func refreshExternal() async {
+        guard let key else { return }
+        if externalAssets.isEmpty {
+            do {
+                externalAssets = try ExternalWallet.assets(seed: key.seed)
+            } catch {
+                externalProblems["*"] = message(for: error)
+                return
+            }
+        }
+        externalProblems["*"] = nil
+        await withTaskGroup(of: (String, Result<ExternalBalance, Error>).self) { group in
+            for asset in externalAssets {
+                group.addTask {
+                    do {
+                        return (asset.asset, .success(try await ExternalBalances.balance(of: asset)))
+                    } catch {
+                        return (asset.asset, .failure(error))
+                    }
+                }
+            }
+            for await (id, result) in group {
+                switch result {
+                case .success(let balance):
+                    externalBalances[id] = balance
+                    externalProblems[id] = nil
+                case .failure(let error):
+                    externalProblems[id] = message(for: error)
+                }
+            }
+        }
+    }
+
     func deleteWallet() {
         vault.delete()
         key = nil
@@ -283,6 +322,9 @@ final class AppModel: ObservableObject {
         history = []
         historyLimit = AppModel.historyStep
         credits = nil
+        externalAssets = []
+        externalBalances = [:]
+        externalProblems = [:]
         problem = nil
         seedMissing = false
         phase = .onboarding

@@ -1,0 +1,261 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(EgoWalletCore)
+import EgoWalletCore
+#endif
+
+/// A coin on another chain, held at an address derived from the Ego seed the
+/// same way Ego Desktop derives it (ego-wallet-core does the derivation).
+public struct ExternalAsset: Identifiable, Hashable, Sendable {
+    /// What's held: "BTC", "ETH", "USDT"…
+    public let asset: String
+    public let name: String
+    /// The chain it lives on: "BTC", "ETH" for USDT and USDC…
+    public let chain: String
+    public let address: String
+    public let addressType: String
+    public let explorerPrefix: String
+    /// The token contract, for tokens such as USDT on Ethereum.
+    public let contract: String?
+    public let decimals: Int
+
+    public var id: String { asset }
+    public var explorerURL: URL? { URL(string: explorerPrefix + address) }
+    public var networkLabel: String {
+        contract == nil ? name : "\(name) on \(ExternalAsset.chainNames[chain] ?? chain)"
+    }
+
+    static let chainNames = ["ETH": "Ethereum", "BNB": "BNB Chain"]
+    static let networks = [
+        "BTC": "Bitcoin", "ETH": "Ethereum", "BNB": "BNB Chain (BEP-20)", "SOL": "Solana", "ADA": "Cardano",
+        "XRP": "the XRP Ledger", "TRX": "Tron", "LTC": "Litecoin", "DOGE": "Dogecoin",
+    ]
+
+    /// The network to name when warning people where to send from.
+    public static func networkName(_ chain: String) -> String { networks[chain] ?? chain }
+    static let decimalsByChain = ["BTC": 8, "LTC": 8, "DOGE": 8, "ETH": 18, "BNB": 18, "SOL": 9, "ADA": 6, "XRP": 6, "TRX": 6]
+}
+
+public enum ExternalWalletError: Error, Equatable, LocalizedError {
+    case unavailable
+    case derivation(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable: return "Other coins aren't available in this build."
+        case .derivation(let why): return "Couldn't work out your other addresses: \(why)"
+        }
+    }
+}
+
+public enum ExternalWallet {
+    struct Derived: Decodable {
+        let chain: String
+        let symbol: String
+        let address: String
+        let addressType: String
+        let explorerPrefix: String
+
+        enum CodingKeys: String, CodingKey {
+            case chain, symbol, address
+            case addressType = "address_type"
+            case explorerPrefix = "explorer_prefix"
+        }
+    }
+
+    /// Every coin Ego Desktop's wallet lists, in its order.
+    public static func assets(seed: [UInt8]) throws -> [ExternalAsset] {
+        try assets(from: derive(seed: seed))
+    }
+
+    static func assets(from derived: [Derived]) -> [ExternalAsset] {
+        var list = derived.map {
+            ExternalAsset(
+                asset: $0.symbol, name: $0.chain, chain: $0.symbol, address: $0.address,
+                addressType: $0.addressType, explorerPrefix: $0.explorerPrefix,
+                contract: nil, decimals: ExternalAsset.decimalsByChain[$0.symbol] ?? 8
+            )
+        }
+        if let eth = derived.first(where: { $0.symbol == "ETH" }) {
+            for (asset, contract) in [("USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"), ("USDC", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")] {
+                list.append(ExternalAsset(
+                    asset: asset, name: asset, chain: "ETH", address: eth.address,
+                    addressType: "ERC-20", explorerPrefix: eth.explorerPrefix,
+                    contract: contract, decimals: 6
+                ))
+            }
+        }
+        return list
+    }
+
+    static func derive(seed: [UInt8]) throws -> [Derived] {
+        #if canImport(EgoWalletCore)
+        let json: String = seed.withUnsafeBufferPointer { buffer in
+            guard let raw = ego_wallet_addresses(buffer.baseAddress, buffer.count) else { return "" }
+            defer { ego_wallet_string_free(raw) }
+            return String(cString: raw)
+        }
+        let data = Data(json.utf8)
+        if let list = try? JSONDecoder().decode([Derived].self, from: data) { return list }
+        struct Failure: Decodable { let error: String }
+        throw ExternalWalletError.derivation((try? JSONDecoder().decode(Failure.self, from: data))?.error ?? "no answer")
+        #else
+        throw ExternalWalletError.unavailable
+        #endif
+    }
+}
+
+/// A balance in the asset's smallest unit, kept as a decimal string because
+/// wei can exceed 64 bits.
+public struct ExternalBalance: Equatable, Sendable {
+    public let units: String
+    public let decimals: Int
+
+    public var isZero: Bool { units.allSatisfy { $0 == "0" } }
+
+    /// "0.012345", trimmed to `maxDecimals` without rounding up.
+    public func formatted(maxDecimals: Int = 6) -> String {
+        BigUnits.format(units, decimals: decimals, maxDecimals: maxDecimals)
+    }
+}
+
+enum BigUnits {
+    /// "0x1bc16d674ec80000" → "2000000000000000000".
+    static func decimal(fromHex hex: String) -> String? {
+        var digits = Substring(hex.lowercased())
+        if digits.hasPrefix("0x") { digits = digits.dropFirst(2) }
+        if digits.isEmpty { return "0" }
+        var result: [UInt8] = [0]  // base-10 digits, least significant first
+        for c in digits {
+            guard let nibble = c.hexDigitValue else { return nil }
+            var carry = nibble
+            for i in result.indices {
+                let v = Int(result[i]) * 16 + carry
+                result[i] = UInt8(v % 10)
+                carry = v / 10
+            }
+            while carry > 0 {
+                result.append(UInt8(carry % 10))
+                carry /= 10
+            }
+        }
+        while result.count > 1 && result.last == 0 { result.removeLast() }
+        return String(result.reversed().map { Character(String($0)) })
+    }
+
+    static func format(_ units: String, decimals: Int, maxDecimals: Int) -> String {
+        var digits = String(units.drop { $0 == "0" })
+        if digits.isEmpty { digits = "0" }
+        if digits.count <= decimals {
+            digits = String(repeating: "0", count: decimals - digits.count + 1) + digits
+        }
+        let split = digits.index(digits.endIndex, offsetBy: -decimals)
+        let whole = digits[..<split]
+        var fraction = String(digits[split...].prefix(maxDecimals))
+        while fraction.last == "0" { fraction.removeLast() }
+        while fraction.count < min(2, maxDecimals) { fraction += "0" }
+        return fraction.isEmpty ? String(whole) : "\(whole).\(fraction)"
+    }
+}
+
+/// Balances from the same public services Ego Desktop asks.
+public enum ExternalBalances {
+    static let evmNodes = [
+        "ETH": ["https://eth.llamarpc.com", "https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
+        "BNB": ["https://bsc-dataseed.binance.org", "https://bsc-rpc.publicnode.com", "https://bsc.drpc.org"],
+    ]
+
+    public static func balance(of asset: ExternalAsset) async throws -> ExternalBalance {
+        let units: String
+        switch asset.chain {
+        case "ETH", "BNB":
+            if let contract = asset.contract {
+                let data = "0x70a08231" + String(repeating: "0", count: 24) + asset.address.dropFirst(2).lowercased()
+                units = try await evmHex(asset.chain, "eth_call", [["to": contract, "data": data], "latest"])
+            } else {
+                units = try await evmHex(asset.chain, "eth_getBalance", [asset.address, "latest"])
+            }
+        case "BTC":
+            let json = try await getJSON("https://blockstream.info/api/address/\(asset.address)")
+            let stats = json["chain_stats"] as? [String: Any]
+            let funded = (stats?["funded_txo_sum"] as? NSNumber)?.uint64Value ?? 0
+            let spent = (stats?["spent_txo_sum"] as? NSNumber)?.uint64Value ?? 0
+            units = String(funded >= spent ? funded - spent : 0)
+        case "LTC", "DOGE":
+            let json = try await getJSON("https://api.blockcypher.com/v1/\(asset.chain.lowercased())/main/addrs/\(asset.address)/balance")
+            units = String((json["balance"] as? NSNumber)?.uint64Value ?? 0)
+        case "SOL":
+            let json = try await postJSON("https://api.mainnet-beta.solana.com", ["jsonrpc": "2.0", "id": 1, "method": "getBalance", "params": [asset.address]])
+            units = String(((json["result"] as? [String: Any])?["value"] as? NSNumber)?.uint64Value ?? 0)
+        case "XRP":
+            let json = try await postJSON("https://xrplcluster.com", ["method": "account_info", "params": [["account": asset.address, "ledger_index": "validated"]]])
+            let result = json["result"] as? [String: Any]
+            if result?["error"] as? String == "actNotFound" {
+                units = "0"  // An XRP account exists only once it's been funded.
+            } else {
+                units = ((result?["account_data"] as? [String: Any])?["Balance"] as? String) ?? "0"
+            }
+        case "TRX":
+            let json = try await getJSON("https://api.trongrid.io/v1/accounts/\(asset.address)")
+            let first = (json["data"] as? [[String: Any]])?.first
+            units = String((first?["balance"] as? NSNumber)?.uint64Value ?? 0)
+        case "ADA":
+            // Koios only takes address_info as a POST now; the GET form answers 404.
+            var request = URLRequest(url: URL(string: "https://api.koios.rest/api/v1/address_info")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["_addresses": [asset.address]])
+            let data = try await fetch(request)
+            let first = (try JSONSerialization.jsonObject(with: data) as? [[String: Any]])?.first
+            units = (first?["balance"] as? String) ?? "0"
+        default:
+            throw GatewayError.badResponse
+        }
+        guard units.allSatisfy(\.isNumber) else { throw GatewayError.badResponse }
+        return ExternalBalance(units: units, decimals: asset.decimals)
+    }
+
+    static func evmHex(_ chain: String, _ method: String, _ params: [Any]) async throws -> String {
+        var lastError: Error = GatewayError.badResponse
+        for node in evmNodes[chain] ?? [] {
+            do {
+                let json = try await postJSON(node, ["jsonrpc": "2.0", "id": 1, "method": method, "params": params])
+                if let hex = json["result"] as? String, let units = BigUnits.decimal(fromHex: hex) { return units }
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+
+    static func getJSON(_ url: String) async throws -> [String: Any] {
+        guard let url = URL(string: url) else { throw GatewayError.badResponse }
+        return try object(try await fetch(URLRequest(url: url)))
+    }
+
+    static func postJSON(_ url: String, _ body: [String: Any]) async throws -> [String: Any] {
+        guard let url = URL(string: url) else { throw GatewayError.badResponse }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try object(try await fetch(request))
+    }
+
+    static func object(_ data: Data) throws -> [String: Any] {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw GatewayError.badResponse }
+        return json
+    }
+
+    static func fetch(_ request: URLRequest) async throws -> Data {
+        var request = request
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) || http.statusCode == 404 else {
+            throw GatewayError.unreachable("The \(request.url?.host ?? "balance") service didn't answer.")
+        }
+        return data
+    }
+}

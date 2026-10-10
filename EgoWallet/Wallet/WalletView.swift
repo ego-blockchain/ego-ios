@@ -13,6 +13,7 @@ struct WalletView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     balanceCard
                     EGUSDCard()
+                    OtherCoinsCard()
                     EarningsCard()
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
@@ -21,7 +22,11 @@ struct WalletView: View {
                 }
                 .padding(16)
             }
-            .refreshable { await model.refresh() }
+            .refreshable {
+                async let ego: Void = model.refresh()
+                async let others: Void = model.refreshExternal()
+                _ = await (ego, others)
+            }
             .screenBackground()
             .navigationTitle("Wallet")
             .sheet(isPresented: $sending) { SendView() }
@@ -754,4 +759,166 @@ struct PayEGUSDView: View {
 
 private extension UInt64 {
     func saturatingSub(_ other: UInt64) -> UInt64 { self > other ? self - other : 0 }
+}
+
+/// Coins on other chains, held at the addresses Ego Desktop derives from
+/// the same seed.
+struct OtherCoinsCard: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var selected: ExternalAsset?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: "Other coins")
+                .padding(.bottom, 6)
+            if let problem = model.externalProblems["*"] {
+                Text(problem).font(.footnote).foregroundStyle(Brand.danger)
+            } else if model.externalAssets.isEmpty {
+                Text("Loading…").font(.footnote).foregroundStyle(Brand.muted)
+            }
+            ForEach(model.externalAssets) { asset in
+                Button { selected = asset } label: { CoinRow(asset: asset) }
+                    .buttonStyle(.plain)
+                if asset.id != model.externalAssets.last?.id {
+                    Divider().overlay(Brand.line)
+                }
+            }
+        }
+        .card()
+        .task { await model.refreshExternal() }
+        .sheet(item: $selected) { CoinDetailView(asset: $0) }
+    }
+}
+
+enum CoinStyle {
+    static func color(_ asset: String) -> Color {
+        let hex: [String: UInt32] = [
+            "BTC": 0xF7931A, "ETH": 0x627EEA, "BNB": 0xF3BA2F, "SOL": 0x9945FF, "ADA": 0x3CC8C8,
+            "XRP": 0x00AAE4, "TRX": 0xEF0027, "LTC": 0xA5A5A5, "DOGE": 0xC2A633, "USDT": 0x26A17B, "USDC": 0x2775CA,
+        ]
+        let v = hex[asset] ?? 0x888888
+        return Color(red: Double(v >> 16 & 0xff) / 255, green: Double(v >> 8 & 0xff) / 255, blue: Double(v & 0xff) / 255)
+    }
+
+    static func glyph(_ asset: String) -> String {
+        ["BTC": "₿", "ETH": "Ξ", "BNB": "◆", "SOL": "◎", "ADA": "₳", "XRP": "✕", "TRX": "T", "LTC": "Ł", "DOGE": "Ð", "USDT": "$", "USDC": "$"][asset] ?? "•"
+    }
+}
+
+struct CoinBadge: View {
+    let asset: String
+    var size: CGFloat = 34
+
+    var body: some View {
+        Text(CoinStyle.glyph(asset))
+            .font(.system(size: size * 0.45, weight: .bold, design: .rounded))
+            .frame(width: size, height: size)
+            .background(CoinStyle.color(asset).opacity(0.18))
+            .foregroundStyle(CoinStyle.color(asset))
+            .clipShape(Circle())
+    }
+}
+
+struct CoinRow: View {
+    @EnvironmentObject private var model: AppModel
+    let asset: ExternalAsset
+
+    var body: some View {
+        HStack(spacing: 12) {
+            CoinBadge(asset: asset.asset)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(asset.asset)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Brand.text)
+                Text(asset.networkLabel)
+                    .font(.caption)
+                    .foregroundStyle(Brand.muted)
+            }
+            Spacer()
+            Group {
+                if let balance = model.externalBalances[asset.id] {
+                    Text(balance.formatted())
+                        .foregroundStyle(balance.isZero ? Brand.muted : Brand.text)
+                } else if model.externalProblems[asset.id] != nil {
+                    Text("—").foregroundStyle(Brand.muted)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+            .monospacedDigit()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Brand.muted.opacity(0.6))
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+}
+
+/// One coin: its balance and where to receive it.
+struct CoinDetailView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let asset: ExternalAsset
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    CoinBadge(asset: asset.asset, size: 56)
+                    VStack(spacing: 4) {
+                        Text(model.externalBalances[asset.id].map { "\($0.formatted(maxDecimals: 8)) \(asset.asset)" } ?? "…")
+                            .font(.system(.title, design: .rounded, weight: .bold))
+                            .foregroundStyle(Brand.text)
+                            .monospacedDigit()
+                        Text(asset.networkLabel).foregroundStyle(Brand.muted)
+                        if let problem = model.externalProblems[asset.id] {
+                            Text(problem).font(.caption).foregroundStyle(Brand.danger).multilineTextAlignment(.center)
+                        }
+                    }
+                    VStack(spacing: 14) {
+                        SectionLabel(text: "Receive \(asset.asset)")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let image = QRCode.image(for: asset.address) {
+                            Image(uiImage: image)
+                                .interpolation(.none)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 200, height: 200)
+                                .padding(12)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        Text(asset.address)
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(Brand.text)
+                            .multilineTextAlignment(.center)
+                            .textSelection(.enabled)
+                        Label("Only send \(asset.asset) on \(ExternalAsset.networkName(asset.chain)) to this address. Coins sent on another network can be lost.", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(Brand.warning)
+                        HStack(spacing: 12) {
+                            Button(copied ? "Copied" : "Copy address") {
+                                UIPasteboard.general.string = asset.address
+                                copied = true
+                            }
+                            .buttonStyle(PrimaryButtonStyle())
+                            if let url = asset.explorerURL {
+                                Link("Explorer", destination: url)
+                                    .buttonStyle(SecondaryButtonStyle())
+                            }
+                        }
+                    }
+                    .card()
+                }
+                .padding(16)
+            }
+            .screenBackground()
+            .navigationTitle(asset.asset)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
 }
