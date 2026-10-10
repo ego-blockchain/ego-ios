@@ -86,7 +86,9 @@ struct SeedVault {
                 let status = SecItemCopyMatching(query as CFDictionary, &item)
                 if status == errSecSuccess, let data = item as? Data, data.count == 32 {
                     continuation.resume(returning: [UInt8](data))
-                } else if status == errSecUserCanceled {
+                } else if status == errSecUserCanceled || status == errSecInteractionNotAllowed {
+                    // Not allowed means the app isn't on screen, so Face ID can't show. Not an error:
+                    // the lock screen asks again when the app comes back.
                     continuation.resume(throwing: VaultError.cancelled)
                 } else if status == errSecItemNotFound {
                     continuation.resume(throwing: VaultError.missing)
