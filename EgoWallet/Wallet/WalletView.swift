@@ -13,7 +13,9 @@ struct WalletView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     balanceCard
                     EGUSDCard()
+                    ShieldedCard()
                     OtherCoinsCard()
+                    PresaleCard()
                     EarningsCard()
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
@@ -988,8 +990,14 @@ struct CoinSendView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let asset: ExternalAsset
-    @State private var recipient = ""
-    @State private var amount = ""
+    @State private var recipient: String
+    @State private var amount: String
+
+    init(asset: ExternalAsset, prefilledTo: String? = nil, prefilledAmount: String? = nil) {
+        self.asset = asset
+        _recipient = State(initialValue: prefilledTo ?? "")
+        _amount = State(initialValue: prefilledAmount ?? "")
+    }
     @State private var tag = ""
     @State private var prepared: PreparedTransfer?
     @State private var busy = false

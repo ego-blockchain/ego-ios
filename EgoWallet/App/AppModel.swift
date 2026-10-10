@@ -32,6 +32,10 @@ final class AppModel: ObservableObject {
     @Published var externalAssets: [ExternalAsset] = []
     @Published var externalBalances: [String: ExternalBalance] = [:]
     @Published var externalProblems: [String: String] = [:]
+    /// Shielded notes in every device's domain, found by asking a gateway.
+    @Published var shieldedNotes: [Shielded.Note] = []
+    @Published var shieldedProblem: String?
+    @Published var shieldedScanning = false
     @Published var history: [HistoryItem] = []
     /// The gateway returns the newest transactions up to a limit, with no way
     /// to skip ahead, so older pages are reached by asking for more.
@@ -325,6 +329,59 @@ final class AppModel: ObservableObject {
         )
     }
 
+    /// The mainnet address (ego1…) pre-sale IOUs record.
+    var mainnetAddress: String { key.map { EgoAddress.mainnet(publicKey: $0.publicKey) } ?? "" }
+
+    var shieldedBalance: UInt64 { shieldedNotes.filter { !$0.spent }.map(\.value).reduce(0, +) }
+
+    func refreshShielded() async {
+        guard let key else { return }
+        shieldedScanning = true
+        defer { shieldedScanning = false }
+        do {
+            let notes = try await perform { client in
+                let pool = try await Shielded.pool(using: client)
+                return try await Shielded.scan(seed: key.seed, pool: pool, using: client)
+            }
+            shieldedNotes = notes
+            shieldedProblem = nil
+        } catch {
+            shieldedProblem = message(for: error)
+        }
+    }
+
+    /// Deposits `amount` µEGOC into the shielded pool as fixed-size notes, one transaction each.
+    func shield(amount: UInt64) async throws -> [String] {
+        guard let key else { throw WalletError.locked }
+        let plan = try Shielded.planDeposit(seed: key.seed, amount: amount, notes: shieldedNotes)
+        let address = key.address
+        let info = try await perform { try await $0.nonce(of: address) }
+        var hashes: [String] = []
+        for (i, note) in plan.notes.enumerated() {
+            let tx = try Transactions.sign(
+                key: key, to: Shielded.poolAddress, amount: note.value, nonce: info.next + UInt64(i),
+                fee: info.feeUegoc, memo: note.memo, txType: "shield", timestamp: Int64(Date().timeIntervalSince1970)
+            )
+            hashes.append(try await submit(tx))
+        }
+        Task { await refreshShielded() }
+        return hashes
+    }
+
+    /// Proves the notes on this iPhone and withdraws them to `recipient`.
+    func unshield(_ notes: [Shielded.Note], to recipient: String) async throws -> (hash: String, payout: UInt64) {
+        guard let key else { throw WalletError.locked }
+        let seed = key.seed
+        return try await perform { client in
+            let pool = try await Shielded.pool(using: client)
+            let withdrawal = try await Task.detached(priority: .userInitiated) {
+                try Shielded.prove(seed: seed, notes: notes, pool: pool, recipient: recipient)
+            }.value
+            let result = try await client.submit(json: Shielded.transaction(withdrawal))
+            return (result.txHash, withdrawal.amount - withdrawal.fee)
+        }
+    }
+
     func deleteWallet() {
         vault.delete()
         key = nil
@@ -336,6 +393,8 @@ final class AppModel: ObservableObject {
         externalAssets = []
         externalBalances = [:]
         externalProblems = [:]
+        shieldedNotes = []
+        shieldedProblem = nil
         problem = nil
         seedMissing = false
         phase = .onboarding

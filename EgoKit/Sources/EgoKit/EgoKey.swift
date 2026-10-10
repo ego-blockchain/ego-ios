@@ -16,14 +16,18 @@ public enum EgoAddress {
     private static let eoa: UInt8 = 0
 
     public static func from(publicKey: [UInt8]) -> String {
+        address(publicKey: publicKey, chainId: UInt32(EgoNetwork.chainId), hrp: EgoNetwork.hrp)
+    }
+
+    static func address(publicKey: [UInt8], chainId: UInt32, hrp: String) -> String {
         var input = domain
-        input.append(contentsOf: UInt32(EgoNetwork.chainId).littleEndianBytes)
+        input.append(contentsOf: chainId.littleEndianBytes)
         input.append(contentsOf: publicKey)
         let digest = Blake2s.hash(input)
         var payload = [UInt8]()
         payload.append(version << 5 | eoa)
         payload.append(contentsOf: digest[0..<20])
-        return Bech32m.encode(hrp: EgoNetwork.hrp, payload: payload)
+        return Bech32m.encode(hrp: hrp, payload: payload)
     }
 
     public static func isValid(_ address: String) -> Bool {
