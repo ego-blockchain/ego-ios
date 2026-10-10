@@ -990,6 +990,7 @@ struct CoinSendView: View {
     let asset: ExternalAsset
     @State private var recipient = ""
     @State private var amount = ""
+    @State private var tag = ""
     @State private var prepared: PreparedTransfer?
     @State private var busy = false
     @State private var problem: String?
@@ -997,6 +998,8 @@ struct CoinSendView: View {
 
     private var to: String { recipient.trimmingCharacters(in: .whitespaces) }
     private var recipientOK: Bool { ExternalSend.isValidAddress(to, for: asset) && to.lowercased() != asset.address.lowercased() }
+    private var destinationTag: UInt32? { UInt32(tag.trimmingCharacters(in: .whitespaces)) }
+    private var tagOK: Bool { tag.trimmingCharacters(in: .whitespaces).isEmpty || destinationTag != nil }
     private var amountOK: Bool {
         let t = amount.trimmingCharacters(in: .whitespaces)
         let parts = t.split(separator: ".", omittingEmptySubsequences: false)
@@ -1027,7 +1030,12 @@ struct CoinSendView: View {
                     Section("Check before sending") {
                         LabeledContent("To", value: shortAddress(p.to))
                         LabeledContent("Amount", value: "\(p.amountText) \(asset.asset)")
-                        LabeledContent("Network fee", value: "\(p.feeText) \(p.feeSymbol)")
+                        if let note = ExternalSend.feeNote(asset) {
+                            LabeledContent("Network fee", value: note)
+                        } else {
+                            LabeledContent("Network fee", value: "\(p.feeText) \(p.feeSymbol)")
+                        }
+                        if let destinationTag { LabeledContent("Destination tag", value: "\(destinationTag)") }
                         LabeledContent("Network", value: ExternalAsset.networkName(asset.chain))
                     }
                     if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
@@ -1051,6 +1059,14 @@ struct CoinSendView: View {
                         }
                         Button("Paste") { recipient = UIPasteboard.general.string ?? recipient }
                     }
+                    if asset.chain == "XRP" {
+                        Section {
+                            TextField("Destination tag (optional)", text: $tag).keyboardType(.numberPad)
+                            if !tagOK { Text("A tag is a whole number.").font(.caption).foregroundStyle(Brand.danger) }
+                        } footer: {
+                            Text("Exchanges usually give a tag with their XRP address. Without it, a deposit to an exchange can be lost.")
+                        }
+                    }
                     Section {
                         TextField("0.00", text: $amount).keyboardType(.decimalPad)
                         if let balance = model.externalBalances[asset.id] {
@@ -1068,7 +1084,7 @@ struct CoinSendView: View {
                     if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
                     Section {
                         Button(busy ? "Checking…" : "Review") { Task { await review() } }
-                            .disabled(!recipientOK || !amountOK || busy)
+                            .disabled(!recipientOK || !amountOK || !tagOK || busy)
                     }
                 }
             }
@@ -1084,7 +1100,7 @@ struct CoinSendView: View {
         busy = true
         problem = nil
         do {
-            prepared = try await model.prepareExternalSend(asset, to: to, amount: amount)
+            prepared = try await model.prepareExternalSend(asset, to: to, amount: amount, destinationTag: destinationTag)
         } catch {
             problem = model.message(for: error)
         }

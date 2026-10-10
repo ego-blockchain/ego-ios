@@ -323,7 +323,7 @@ public enum ExternalSendError: Error, Equatable, LocalizedError {
 public enum ExternalSend {
     /// Chains the phone can send on so far.
     public static func canSend(_ asset: ExternalAsset) -> Bool {
-        ["ETH", "BNB", "BTC", "LTC"].contains(asset.chain)
+        ["ETH", "BNB", "BTC", "LTC", "DOGE", "SOL", "XRP", "TRX", "ADA"].contains(asset.chain)
     }
 
     /// Esplora APIs for coins and broadcasting, as on Ego Desktop's explorer links.
@@ -339,6 +339,16 @@ public enum ExternalSend {
             return (25...90).contains(t.count) && (t.lowercased().hasPrefix("bc1") || t.hasPrefix("1") || t.hasPrefix("3"))
         case "LTC":
             return (25...90).contains(t.count) && (t.lowercased().hasPrefix("ltc1") || t.hasPrefix("L") || t.hasPrefix("M") || t.hasPrefix("3"))
+        case "DOGE":
+            return (25...36).contains(t.count) && (t.hasPrefix("D") || t.hasPrefix("A") || t.hasPrefix("9"))
+        case "SOL":
+            return (32...44).contains(t.count) && t.allSatisfy { $0.isLetter || $0.isNumber }
+        case "XRP":
+            return (25...35).contains(t.count) && t.hasPrefix("r")
+        case "TRX":
+            return t.count == 34 && t.hasPrefix("T")
+        case "ADA":
+            return t.count > 50 && t.hasPrefix("addr1")
         default:
             return !t.isEmpty
         }
@@ -348,6 +358,8 @@ public enum ExternalSend {
         let prefix = [
             "ETH": "https://etherscan.io/tx/", "BNB": "https://bscscan.com/tx/",
             "BTC": "https://blockstream.info/tx/", "LTC": "https://litecoinspace.org/tx/",
+            "DOGE": "https://dogechain.info/tx/", "SOL": "https://solscan.io/tx/", "XRP": "https://xrpscan.com/tx/",
+            "TRX": "https://tronscan.org/#/transaction/", "ADA": "https://cardanoscan.io/transaction/",
         ][asset.chain]
         return prefix.flatMap { URL(string: $0 + hash) }
     }
@@ -355,13 +367,16 @@ public enum ExternalSend {
     /// Fetches the nonce and gas price, checks the balances and signs, without sending.
     public static func prepare(
         _ asset: ExternalAsset, seed: [UInt8], to: String, amount: String,
-        balance: ExternalBalance?, nativeBalance: ExternalBalance?
+        balance: ExternalBalance?, nativeBalance: ExternalBalance?, destinationTag: UInt32? = nil
     ) async throws -> PreparedTransfer {
         guard canSend(asset) else { throw ExternalSendError.notYet(asset.asset) }
         let recipient = to.trimmingCharacters(in: .whitespaces)
         guard isValidAddress(recipient, for: asset) else { throw ExternalSendError.badAddress(ExternalAsset.networkName(asset.chain)) }
         if let base = esplora[asset.chain] {
             return try await prepareUTXO(asset, base: base, seed: seed, to: recipient, amount: amount, balance: balance)
+        }
+        if ["DOGE", "SOL", "XRP", "TRX", "ADA"].contains(asset.chain) {
+            return try await prepareOther(asset, seed: seed, to: recipient, amount: amount.trimmingCharacters(in: .whitespaces), balance: balance, destinationTag: destinationTag)
         }
         let nonceHex = try await ExternalBalances.evmHex(asset.chain, "eth_getTransactionCount", [asset.address, "pending"])
         let gasPrice = try await ExternalBalances.evmHex(asset.chain, "eth_gasPrice", [])
@@ -416,6 +431,86 @@ public enum ExternalSend {
     }
 
     /// The network's estimate for confirming within about six blocks, never below 2 sat/vB.
+    static func prepareOther(_ asset: ExternalAsset, seed: [UInt8], to: String, amount: String, balance: ExternalBalance?, destinationTag: UInt32?) async throws -> PreparedTransfer {
+        var request: [String: Any] = ["chain": asset.chain, "to": to, "amount": amount]
+        var signer: Signer = ego_wallet_sign_transfer
+        switch asset.chain {
+        case "DOGE":
+            let json = try await ExternalBalances.getJSON("https://api.blockcypher.com/v1/doge/main/addrs/\(asset.address)?unspentOnly=true&limit=200")
+            let refs = (json["txrefs"] as? [[String: Any]] ?? []) + (json["unconfirmed_txrefs"] as? [[String: Any]] ?? [])
+            let coins = refs.compactMap { r -> [String: Any]? in
+                guard r["spent"] as? Bool != true, let txid = r["tx_hash"] as? String, let vout = r["tx_output_n"] as? Int,
+                      let value = (r["value"] as? NSNumber)?.uint64Value else { return nil }
+                return ["txid": txid, "vout": vout, "value": value]
+            }
+            guard !coins.isEmpty else { throw ExternalSendError.insufficient("This address has no DOGE to send yet.") }
+            request["utxos"] = coins
+            request["fee_rate"] = 1
+            signer = ego_wallet_sign_utxo
+        case "SOL":
+            let json = try await ExternalBalances.postJSON(solanaNode, ["jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": [["commitment": "finalized"]]])
+            guard let hash = ((json["result"] as? [String: Any])?["value"] as? [String: Any])?["blockhash"] as? String else {
+                throw ExternalSendError.rejected("Solana didn't give a recent blockhash.")
+            }
+            request["recent_blockhash"] = hash
+        case "XRP":
+            let json = try await ExternalBalances.postJSON(xrpNode, ["method": "account_info", "params": [["account": asset.address, "ledger_index": "current"]]])
+            let result = json["result"] as? [String: Any]
+            guard let account = result?["account_data"] as? [String: Any], let sequence = (account["Sequence"] as? NSNumber)?.uint32Value,
+                  let ledger = (result?["ledger_current_index"] as? NSNumber)?.uint32Value else {
+                throw ExternalSendError.insufficient("This XRP address hasn't been funded yet, so it can't send.")
+            }
+            request["sequence"] = sequence
+            request["last_ledger"] = ledger + 20
+            if let destinationTag { request["destination_tag"] = destinationTag }
+        case "TRX":
+            let json = try await ExternalBalances.postJSON("https://api.trongrid.io/wallet/getnowblock", [:])
+            let header = (json["block_header"] as? [String: Any])?["raw_data"] as? [String: Any]
+            guard let id = json["blockID"] as? String, let number = (header?["number"] as? NSNumber)?.uint64Value,
+                  let time = (header?["timestamp"] as? NSNumber)?.uint64Value else {
+                throw ExternalSendError.rejected("Tron didn't give a recent block.")
+            }
+            request["block_number"] = number
+            request["block_id"] = id
+            request["block_time"] = time
+            request["now_ms"] = UInt64(Date().timeIntervalSince1970 * 1000)
+        default: // ADA
+            let tipData = try await ExternalBalances.fetch(URLRequest(url: URL(string: "https://api.koios.rest/api/v1/tip")!))
+            guard let slot = ((try JSONSerialization.jsonObject(with: tipData) as? [[String: Any]])?.first?["abs_slot"] as? NSNumber)?.uint64Value else {
+                throw ExternalSendError.rejected("Cardano didn't give the current slot.")
+            }
+            var utxoRequest = URLRequest(url: URL(string: "https://api.koios.rest/api/v1/address_utxos")!)
+            utxoRequest.httpMethod = "POST"
+            utxoRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            utxoRequest.httpBody = try JSONSerialization.data(withJSONObject: ["_addresses": [asset.address]])
+            let list = try JSONSerialization.jsonObject(with: try await ExternalBalances.fetch(utxoRequest)) as? [[String: Any]] ?? []
+            // Coins carrying native tokens can't be spent by a plain ADA transfer.
+            let coins = list.compactMap { u -> [String: Any]? in
+                guard (u["asset_list"] as? [Any])?.isEmpty ?? true, let hash = u["tx_hash"] as? String,
+                      let index = (u["tx_index"] as? NSNumber)?.uint64Value, let value = UInt64(u["value"] as? String ?? "") else { return nil }
+                return ["tx_hash": hash, "tx_index": index, "value": value]
+            }
+            guard !coins.isEmpty else { throw ExternalSendError.insufficient("This address has no ADA it can send yet.") }
+            request["utxos"] = coins
+            request["ttl"] = slot + 7_200
+        }
+        let signed = try sign(seed: seed, request: request, with: signer)
+        let prepared = PreparedTransfer(
+            asset: asset, to: to, raw: signed.raw, hash: signed.hash,
+            amountUnits: signed.amountUnits, feeUnits: signed.fee, feeDecimals: asset.decimals, feeSymbol: asset.asset
+        )
+        try checkFunds(prepared, balance: balance, nativeBalance: balance)
+        return prepared
+    }
+
+    static let solanaNode = "https://api.mainnet-beta.solana.com"
+    static let xrpNode = "https://xrplcluster.com"
+
+    /// Tron spends free daily bandwidth on a transfer, or burns up to about 0.27 TRX without it.
+    public static func feeNote(_ asset: ExternalAsset) -> String? {
+        asset.chain == "TRX" ? "Free if you have bandwidth left today, otherwise up to about 0.27 TRX." : nil
+    }
+
     /// litecoinspace runs mempool.space, which has no /fee-estimates; its half-hour rate is the same idea.
     static func feeRate(_ base: String) async throws -> UInt64 {
         let rate: NSNumber?
@@ -429,6 +524,41 @@ public enum ExternalSend {
     }
 
     public static func broadcast(_ p: PreparedTransfer) async throws -> String {
+        switch p.asset.chain {
+        case "DOGE":
+            let json = try await ExternalBalances.postJSON("https://api.blockcypher.com/v1/doge/main/txs/push", ["tx": p.raw])
+            if let hash = (json["tx"] as? [String: Any])?["hash"] as? String { return hash }
+            throw ExternalSendError.rejected(json["error"] as? String ?? "no answer")
+        case "SOL":
+            let json = try await ExternalBalances.postJSON(solanaNode, ["jsonrpc": "2.0", "id": 1, "method": "sendTransaction", "params": [p.raw, ["encoding": "base64"]]])
+            if let sig = json["result"] as? String { return sig }
+            throw ExternalSendError.rejected(((json["error"] as? [String: Any])?["message"] as? String) ?? "no answer")
+        case "XRP":
+            let json = try await ExternalBalances.postJSON(xrpNode, ["method": "submit", "params": [["tx_blob": p.raw]]])
+            let result = json["result"] as? [String: Any]
+            let engine = result?["engine_result"] as? String ?? ""
+            if engine == "tesSUCCESS" || engine == "terQUEUED" { return p.hash }
+            throw ExternalSendError.rejected(result?["engine_result_message"] as? String ?? engine)
+        case "TRX":
+            let json = try await ExternalBalances.postJSON("https://api.trongrid.io/wallet/broadcasthex", ["transaction": p.raw])
+            if json["result"] as? Bool == true { return (json["txid"] as? String) ?? p.hash }
+            let message = json["message"] as? String ?? json["code"] as? String ?? "no answer"
+            throw ExternalSendError.rejected(Data(hexString: message).flatMap { String(data: $0, encoding: .utf8) } ?? message)
+        case "ADA":
+            var request = URLRequest(url: URL(string: "https://api.koios.rest/api/v1/submittx")!)
+            request.httpMethod = "POST"
+            request.setValue("application/cbor", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Data(hexString: p.raw)
+            request.timeoutInterval = 20
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: CharacterSet(charactersIn: "\" \n"))
+            guard (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) == true else {
+                throw ExternalSendError.rejected(text.isEmpty ? "no answer" : text)
+            }
+            return text.count == 64 ? text : p.hash
+        default:
+            break
+        }
         if let base = esplora[p.asset.chain] {
             var request = URLRequest(url: URL(string: "\(base)/tx")!)
             request.httpMethod = "POST"
@@ -486,5 +616,22 @@ public enum ExternalSend {
         #else
         throw ExternalWalletError.unavailable
         #endif
+    }
+}
+
+extension Data {
+    /// Bytes from hex; nil if it isn't hex.
+    init?(hexString: String) {
+        let chars = Array(hexString.utf8)
+        guard chars.count % 2 == 0 else { return nil }
+        var bytes = [UInt8]()
+        bytes.reserveCapacity(chars.count / 2)
+        var i = 0
+        while i < chars.count {
+            guard let hi = Character(UnicodeScalar(chars[i])).hexDigitValue, let lo = Character(UnicodeScalar(chars[i + 1])).hexDigitValue else { return nil }
+            bytes.append(UInt8(hi << 4 | lo))
+            i += 2
+        }
+        self.init(bytes)
     }
 }

@@ -315,12 +315,13 @@ final class AppModel: ObservableObject {
     }
 
     /// Signs a transfer of another coin for review. Nothing is sent yet.
-    func prepareExternalSend(_ asset: ExternalAsset, to: String, amount: String) async throws -> PreparedTransfer {
+    func prepareExternalSend(_ asset: ExternalAsset, to: String, amount: String, destinationTag: UInt32? = nil) async throws -> PreparedTransfer {
         guard let key else { throw WalletError.locked }
         let native = externalAssets.first { $0.asset == asset.chain && $0.contract == nil }
         return try await ExternalSend.prepare(
             asset, seed: key.seed, to: to, amount: amount,
-            balance: externalBalances[asset.id], nativeBalance: native.flatMap { externalBalances[$0.id] }
+            balance: externalBalances[asset.id], nativeBalance: native.flatMap { externalBalances[$0.id] },
+            destinationTag: destinationTag
         )
     }
 
