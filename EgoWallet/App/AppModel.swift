@@ -100,8 +100,20 @@ final class AppModel: ObservableObject {
 
     func perform<T>(_ work: (GatewayClient) async throws -> T) async throws -> T {
         guard online else { throw WalletError.offline }
+        let client = try await gateway()
         do {
-            return try await work(try await gateway())
+            return try await work(client)
+        } catch GatewayError.rpc(AppModel.notHere, let message) {
+            // An older Ego Desktop may not have this method yet. Ask other
+            // gateways rather than failing, without leaving this one.
+            for other in await directory.known.prefix(AppModel.notHereTries)
+            where other.announcement.endpoint != client.gateway.endpoint.absoluteString {
+                guard let gateway = other.announcement.gateway else { continue }
+                if let answer = try? await work(GatewayClient(gateway: gateway, timeout: 8)) {
+                    return answer
+                }
+            }
+            throw GatewayError.rpc(AppModel.notHere, message)
         } catch GatewayError.rpc(let code, let message) {
             throw GatewayError.rpc(code, message)
         } catch {
@@ -258,6 +270,10 @@ final class AppModel: ObservableObject {
         historyLimit = min(historyLimit + AppModel.historyStep, AppModel.historyMax)
         await refresh()
     }
+
+    /// JSON-RPC "method not found", what a gateway answers for a method it's too old to have.
+    static let notHere = -32601
+    static let notHereTries = 4
 
     func deleteWallet() {
         vault.delete()
