@@ -11,33 +11,57 @@ struct OnboardingView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(spacing: 26) {
                 Spacer()
-                EgoMark(size: 64)
-                VStack(alignment: .leading, spacing: 10) {
+                GlowingMark(size: 96).reveal(0)
+                VStack(spacing: 12) {
                     Text("Ego Wallet")
-                        .font(.system(size: 40, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Brand.text)
-                    Text("Hold EGOC, store files on Ego Desktop computers, chat with the community and trade peer to peer. Your keys never leave this iPhone.")
+                        .font(.system(size: 42, weight: .heavy, design: .rounded))
+                        .foregroundStyle(LinearGradient(colors: [Brand.text, Brand.lime], startPoint: .leading, endPoint: .trailing))
+                        .reveal(0.15)
+                    Text("Hold EGOC and other coins, store files on Ego Desktop computers, chat with the community and trade peer to peer. Your keys never leave this iPhone.")
                         .font(.body)
                         .foregroundStyle(Brand.muted)
+                        .multilineTextAlignment(.center)
+                        .reveal(0.25)
                 }
+                HStack(spacing: 10) {
+                    FeaturePill(icon: "lock.shield.fill", text: "Quantum-safe")
+                    FeaturePill(icon: "eye.slash.fill", text: "Private")
+                    FeaturePill(icon: "bitcoinsign.circle.fill", text: "Multi-coin")
+                }
+                .reveal(0.35)
                 Spacer()
                 VStack(spacing: 12) {
                     agreement
                     NavigationLink("Create a new wallet") { CreateWalletView() }
-                        .buttonStyle(PrimaryButtonStyle())
+                        .buttonStyle(GlowButtonStyle())
                         .disabled(!accepted)
-                        .opacity(accepted ? 1 : 0.4)
                     NavigationLink("I already have a wallet") { ImportWalletView() }
                         .buttonStyle(SecondaryButtonStyle())
                         .disabled(!accepted)
                         .opacity(accepted ? 1 : 0.4)
                 }
+                .reveal(0.45)
             }
             .padding(24)
-            .screenBackground()
+            .background(AuroraBackground())
         }
+    }
+}
+
+struct FeaturePill: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: icon)
+            .font(.system(.caption, design: .rounded, weight: .semibold))
+            .foregroundStyle(Brand.text)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().stroke(Brand.lime.opacity(0.25)))
     }
 }
 
@@ -127,28 +151,27 @@ struct ConfirmPhraseView: View {
     @State private var problem: String?
 
     var body: some View {
-        Form {
-            Section {
-                Text("Type these words from your paper to make sure you have them right.")
-                    .foregroundStyle(Brand.muted)
-            }
-            Section {
-                ForEach(0..<3, id: \.self) { i in
-                    TextField("Word \(positions[i] + 1)", text: $answers[i])
+        GlassPage {
+            Text("Type these words from your paper to make sure you have them right.")
+                .font(.subheadline)
+                .foregroundStyle(Brand.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(0..<3, id: \.self) { i in
+                GlassField(label: "Word \(positions[i] + 1)", icon: "\(i + 1).circle") {
+                    TextField("", text: $answers[i])
+                        .font(.system(.title3, design: .monospaced))
+                        .foregroundStyle(Brand.text)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                 }
+                .reveal(Double(i) * 0.05)
             }
-            if let problem {
-                Section { Text(problem).foregroundStyle(Brand.danger) }
-            }
-            Section {
-                Button("Finish") { finish() }
-                    .disabled(answers.contains { $0.trimmingCharacters(in: .whitespaces).isEmpty })
-            }
+            if let problem { ProblemBanner(text: problem) }
+            Button("Finish") { finish() }
+                .buttonStyle(GlowButtonStyle())
+                .disabled(answers.contains { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+                .padding(.top, 8)
         }
-        .scrollContentBackground(.hidden)
-        .screenBackground()
         .navigationTitle("Check your words")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -173,28 +196,32 @@ struct ImportWalletView: View {
     @State private var problem: String?
 
     var body: some View {
-        Form {
-            Section {
+        GlassPage {
+            GlassField(label: "Recovery phrase or raw seed", icon: "key.horizontal.fill", trailing: AnyView(
+                Button {
+                    text = UIPasteboard.general.string ?? text
+                    Haptics.tap()
+                } label: {
+                    Label("Paste", systemImage: "doc.on.clipboard").font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(Brand.lime)
+            )) {
                 TextEditor(text: $text)
                     .frame(minHeight: 160)
                     .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(Brand.text)
+                    .scrollContentBackground(.hidden)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-            } header: {
-                Text("Recovery phrase or raw seed")
-            } footer: {
-                Text("Your 24 words, separated by spaces, or the Raw Seed (hex) from Ego Desktop's recovery screen: 64 characters, with or without the spaces.")
+                    .privacySensitive()
             }
-            if let problem {
-                Section { Text(problem).foregroundStyle(Brand.danger) }
-            }
-            Section {
-                Button("Restore wallet") { restore() }
-                    .disabled(!RecoveryInput.looksComplete(text))
-            }
+            NoteCard(text: "Your 24 words, separated by spaces, or the Raw Seed (hex) from Ego Desktop's recovery screen: 64 characters, with or without the spaces.")
+            if let problem { ProblemBanner(text: problem) }
+            Button("Restore wallet") { restore() }
+                .buttonStyle(GlowButtonStyle())
+                .disabled(!RecoveryInput.looksComplete(text))
+                .padding(.top, 8)
         }
-        .scrollContentBackground(.hidden)
-        .screenBackground()
         .navigationTitle("Restore")
         .navigationBarTitleDisplayMode(.inline)
     }

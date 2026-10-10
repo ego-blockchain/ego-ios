@@ -68,166 +68,197 @@ struct PresaleView: View {
     private var passwordsOK: Bool { !password.trimmingCharacters(in: .whitespaces).isEmpty && password == password2 }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let made {
-                    doneSections(made)
-                } else {
-                    priceSection
-                    Section {
-                        Picker("Pay with", selection: $method) {
-                            ForEach(Method.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-                    if method == .crypto { cryptoSections } else { cardSections }
-                    Section {
-                        SecureField("IOU password", text: $password)
-                        SecureField("Confirm password", text: $password2)
-                        if !password2.isEmpty && password != password2 {
-                            Text("The passwords don't match.").font(.caption).foregroundStyle(Brand.danger)
-                        }
-                    } header: {
-                        Text("IOU password")
-                    } footer: {
-                        Text("Encrypts your proof of purchase. Keep it: without it the IOU can't be opened.")
-                    }
-                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
-                    Section {
-                        if method == .crypto {
-                            Button(busy ? "Making your IOU…" : "Make IOU") { makeCryptoIOU() }
-                                .disabled(config == nil || egocForCrypto <= 0 || !passwordsOK || busy)
-                        } else {
-                            Button(busy ? "Making your IOU…" : "Make IOU") { makeCardIOU() }
-                                .disabled(!cardPaid || session == nil || !passwordsOK || busy)
-                        }
-                    }
-                }
-                if !ious.isEmpty {
-                    Section("Your IOUs") {
-                        ForEach(ious) { iou in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(iou.egocAmount, specifier: "%.2f") EGOC").font(.subheadline.weight(.semibold))
-                                    Text("\(iou.payment) · \(iou.issuedAt.formatted(date: .abbreviated, time: .omitted))")
-                                        .font(.caption).foregroundStyle(Brand.muted)
-                                }
-                                Spacer()
-                                Button("Open") { opening = iou }.font(.caption.weight(.semibold))
-                                ShareLink(item: iou.file) { Image(systemName: "square.and.arrow.up") }
-                            }
-                        }
-                    }
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .screenBackground()
-            .navigationTitle("Pre-sale")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .task { await load() }
-            .sheet(item: $paying) { CoinSendView(asset: $0, prefilledTo: made?.depositAddress, prefilledAmount: made?.payAmount.map { String($0) }) }
-            .sheet(item: $opening) { OpenIOUView(iou: $0) }
-        }
-    }
-
-    private var priceSection: some View {
-        Section {
-            if let config {
-                LabeledContent("Price", value: String(format: "$%.4f per EGOC", config.priceUsd))
-                if config.launchUsd > 0 {
-                    LabeledContent("Launch price", value: String(format: "$%.4f", config.launchUsd))
-                }
-                if !config.tierLabel.isEmpty {
-                    LabeledContent("Round", value: "\(config.tierLabel) (\(config.tierIndex + 1) of \(config.tierCount))")
-                }
-                if config.discountPercent > 0 {
-                    LabeledContent("Discount", value: "\(config.discountPercent)% off launch")
-                }
-            } else if let configProblem {
-                Text(configProblem).foregroundStyle(Brand.danger)
+        FlowSheet(icon: made == nil ? "sparkles" : "checkmark.seal.fill",
+                  title: made == nil ? "EGOC pre-sale" : "IOU saved",
+                  subtitle: made == nil ? "Credited in the Genesis Block when mainnet launches" : nil) {
+            if let made {
+                doneContent(made)
             } else {
-                HStack { ProgressView(); Text("Getting the price…").foregroundStyle(Brand.muted) }
-            }
-        } footer: {
-            Text("You get an encrypted IOU file. The EGOC is credited in the Genesis Block when mainnet launches.")
-        }
-    }
-
-    @ViewBuilder private var cryptoSections: some View {
-        Section {
-            Picker("Coin", selection: $coin) {
-                ForEach(Presale.coins, id: \.self) { Text($0).tag($0) }
-            }
-            TextField("Amount of \(coin)", text: $payText).keyboardType(.decimalPad)
-            if coinUsd > 0 && payAmount > 0 {
-                LabeledContent("Worth", value: String(format: "≈ $%.2f", payAmount * coinUsd))
-            }
-            if let asset = payAsset, let balance = model.externalBalances[asset.id] {
-                LabeledContent("You have", value: "\(balance.formatted(maxDecimals: 8)) \(coin)")
-            }
-        } header: {
-            Text("Pay with crypto")
-        }
-        Section("You receive") {
-            Text(egocForCrypto > 0 ? "\(egocForCrypto, specifier: "%.4f") EGOC" : "—")
-                .font(.system(.title3, design: .rounded, weight: .bold)).foregroundStyle(Brand.mint)
-        }
-    }
-
-    @ViewBuilder private var cardSections: some View {
-        Section {
-            TextField("Dollars (at least $10)", text: $usdText).keyboardType(.decimalPad)
-            LabeledContent("You receive", value: egocForCard > 0 ? String(format: "%.2f EGOC", egocForCard) : "—")
-            if session == nil {
-                Button(busy ? "Opening Stripe…" : "Pay with card or Apple Pay") { startCard() }
-                    .disabled(config == nil || usdAmount < Presale.minimumCardUsd || busy)
-                DisclosureGroup("Already paid but lost the check?") {
-                    TextField("cs_live_… session ID", text: $resumeID)
-                        .font(.system(.footnote, design: .monospaced))
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Resume") {
-                        session = Presale.CardSession(sessionId: resumeID.trimmingCharacters(in: .whitespaces), checkoutURL: URL(string: Presale.service)!, egocAmount: egocForCard, usdAmount: usdAmount)
-                    }
-                    .disabled(resumeID.trimmingCharacters(in: .whitespaces).isEmpty || usdAmount <= 0)
+                priceCard.reveal(0.02)
+                GlassSegments(selection: $method, options: Method.allCases) { $0.rawValue }.reveal(0.06)
+                Group {
+                    if method == .crypto { cryptoContent } else { cardContent }
                 }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                passwordCard
+            }
+            if let problem { ProblemBanner(text: problem) }
+            if !ious.isEmpty { iouList }
+        } footer: {
+            if made != nil {
+                Button("Done") { dismiss() }.buttonStyle(GlowButtonStyle())
+            } else if method == .crypto {
+                Button(busy ? "Making your IOU…" : "Make IOU") { makeCryptoIOU() }
+                    .buttonStyle(GlowButtonStyle())
+                    .disabled(config == nil || egocForCrypto <= 0 || !passwordsOK || busy)
             } else {
-                Text(cardPaid ? "Payment confirmed. Set your IOU password below." : "Finish paying in the browser, then come back and check.")
-                    .font(.footnote).foregroundStyle(cardPaid ? Brand.mint : Brand.warning)
-                if !cardPaid {
-                    Button(busy ? "Checking…" : "Check payment") { checkCard() }.disabled(busy)
+                Button(busy ? "Making your IOU…" : "Make IOU") { makeCardIOU() }
+                    .buttonStyle(GlowButtonStyle())
+                    .disabled(!cardPaid || session == nil || !passwordsOK || busy)
+            }
+        }
+        .task { await load() }
+        .sheet(item: $paying) { CoinSendView(asset: $0, prefilledTo: made?.depositAddress, prefilledAmount: made?.payAmount.map { String($0) }) }
+        .sheet(item: $opening) { OpenIOUView(iou: $0) }
+    }
+
+    @ViewBuilder private var priceCard: some View {
+        if let config {
+            SummaryCard(
+                rows: (config.launchUsd > 0 ? [.init(label: "Launch price", value: String(format: "$%.4f", config.launchUsd))] : [])
+                    + (config.tierLabel.isEmpty ? [] : [.init(label: "Round", value: "\(config.tierLabel) (\(config.tierIndex + 1) of \(config.tierCount))")])
+                    + (config.discountPercent > 0 ? [.init(label: "Discount", value: "\(config.discountPercent)% off launch")] : []),
+                total: .init(label: "Pre-sale price", value: String(format: "$%.4f", config.priceUsd))
+            )
+        } else if let configProblem {
+            ProblemBanner(text: configProblem)
+        } else {
+            GlassField(label: "Price", icon: "dollarsign.circle") {
+                HStack(spacing: 10) {
+                    ProgressView().tint(Brand.lime)
+                    Text("Getting the price…").foregroundStyle(Brand.muted)
                 }
             }
-        } header: {
-            Text("Pay by card")
-        } footer: {
-            Text("Checkout runs on Stripe in your browser.")
         }
     }
 
-    @ViewBuilder private func doneSections(_ iou: PresaleIOU) -> some View {
-        Section {
-            Label("IOU saved", systemImage: "checkmark.seal.fill").foregroundStyle(Brand.mint)
-            LabeledContent("Allocation", value: String(format: "%.4f EGOC", iou.egocAmount))
-            ShareLink(item: iou.file) { Label("Save or share the IOU file", systemImage: "square.and.arrow.up") }
-        } footer: {
-            Text("Keep the file and its password; together they're your proof of purchase. It's also in the Files app under Ego Wallet.")
+    private func receiveField(_ egoc: Double, decimals: Int) -> some View {
+        GlassField(label: "You receive", icon: "sparkles") {
+            Text(egoc > 0 ? String(format: "%.\(decimals)f EGOC", egoc) : "—")
+                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .foregroundStyle(Brand.glow)
+                .contentTransition(.numericText())
+                .animation(.snappy, value: egoc)
         }
+    }
+
+    @ViewBuilder private var cryptoContent: some View {
+        GlassField(label: "Pay with", icon: "bitcoinsign.circle") {
+            ChipPicker(selection: $coin, options: Presale.coins)
+        }
+        AmountInput(
+            label: "Amount", unit: coin, text: $payText,
+            caption: [
+                coinUsd > 0 && payAmount > 0 ? String(format: "≈ $%.2f", payAmount * coinUsd) : nil,
+                payAsset.flatMap { model.externalBalances[$0.id] }.map { "You have \($0.formatted(maxDecimals: 8)) \(coin)" },
+            ].compactMap { $0 }.joined(separator: " · ").nilIfEmpty
+        )
+        receiveField(egocForCrypto, decimals: 4)
+    }
+
+    @ViewBuilder private var cardContent: some View {
+        AmountInput(
+            label: "Dollars", unit: "USD", text: $usdText,
+            caption: String(format: "At least $%.0f", Presale.minimumCardUsd),
+            quickPicks: [("$50", "50"), ("$100", "100"), ("$500", "500")]
+        )
+        receiveField(egocForCard, decimals: 2)
+        if session == nil {
+            Button {
+                startCard()
+            } label: {
+                Label(busy ? "Opening Stripe…" : "Pay with card or Apple Pay", systemImage: "creditcard.fill")
+            }
+            .buttonStyle(OutlineButtonStyle())
+            .disabled(config == nil || usdAmount < Presale.minimumCardUsd || busy)
+            NoteCard(text: "Checkout runs on Stripe in your browser.", icon: "lock.fill")
+            GlassField(label: "Already paid?", icon: "arrow.uturn.backward") {
+                DisclosureGroup("Resume with the checkout session ID") {
+                    VStack(spacing: 10) {
+                        TextField("cs_live_…", text: $resumeID)
+                            .font(.system(.footnote, design: .monospaced))
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .glassInput()
+                        Button("Resume") {
+                            session = Presale.CardSession(sessionId: resumeID.trimmingCharacters(in: .whitespaces), checkoutURL: URL(string: Presale.service)!, egocAmount: egocForCard, usdAmount: usdAmount)
+                        }
+                        .buttonStyle(OutlineButtonStyle())
+                        .disabled(resumeID.trimmingCharacters(in: .whitespaces).isEmpty || usdAmount <= 0)
+                    }
+                    .padding(.top, 8)
+                }
+                .font(.subheadline)
+                .foregroundStyle(Brand.text)
+                .tint(Brand.lime)
+            }
+        } else {
+            NoteCard(text: cardPaid ? "Payment confirmed. Set your IOU password below." : "Finish paying in the browser, then come back and check.",
+                     icon: cardPaid ? "checkmark.circle.fill" : "clock.fill",
+                     tint: cardPaid ? Brand.mint : Brand.warning)
+            if !cardPaid {
+                Button {
+                    checkCard()
+                } label: {
+                    Label(busy ? "Checking…" : "Check payment", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .disabled(busy)
+            }
+        }
+    }
+
+    private var passwordCard: some View {
+        GlassField(label: "IOU password", icon: "key.fill") {
+            SecureField("Password", text: $password).glassInput()
+            SecureField("Confirm password", text: $password2).glassInput()
+            if !password2.isEmpty && password != password2 {
+                Label("The passwords don't match.", systemImage: "exclamationmark.circle.fill").font(.caption).foregroundStyle(Brand.danger)
+            }
+            Text("Encrypts your proof of purchase. Keep it: without it the IOU can't be opened.")
+                .font(.footnote).foregroundStyle(Brand.muted)
+        }
+    }
+
+    @ViewBuilder private func doneContent(_ iou: PresaleIOU) -> some View {
+        SuccessBurst(title: String(format: "%.4f EGOC", iou.egocAmount),
+                     subtitle: "Keep the file and its password; together they're your proof of purchase. It's also in the Files app under Ego Wallet.")
+        ShareLink(item: iou.file) { Label("Save or share the IOU file", systemImage: "square.and.arrow.up") }
+            .buttonStyle(OutlineButtonStyle())
         if let deposit = iou.depositAddress, let amount = iou.payAmount, let coin = iou.payCoin {
-            Section {
-                Text("Send \(String(amount)) \(coin) to the pre-sale treasury:").font(.footnote)
-                Text(deposit).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-                if let asset = model.externalAssets.first(where: { $0.asset == coin }) {
-                    Button("Send now from this wallet") { paying = asset }
-                }
-                Button("Copy address") { UIPasteboard.general.string = deposit }
-            } header: {
-                Text("Pay")
-            } footer: {
+            GlassField(label: "Now pay \(String(amount)) \(coin)", icon: "arrow.up.right") {
+                Text("Send it to the pre-sale treasury:").font(.footnote).foregroundStyle(Brand.muted)
+                Text(deposit)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(Brand.text)
+                    .textSelection(.enabled)
                 Text(coin == "USDT" ? "Send USDT on Ethereum (ERC-20)." : "Send it on \(ExternalAsset.networkName(coin)).")
+                    .font(.caption).foregroundStyle(Brand.warning)
+                HStack(spacing: 10) {
+                    if let asset = model.externalAssets.first(where: { $0.asset == coin }) {
+                        Button("Send now") { paying = asset }.buttonStyle(OutlineButtonStyle())
+                    }
+                    Button("Copy address") {
+                        UIPasteboard.general.string = deposit
+                        Haptics.tap()
+                    }
+                    .buttonStyle(OutlineButtonStyle())
+                }
             }
         }
-        Section { Button("Done") { dismiss() } }
+    }
+
+    private var iouList: some View {
+        GlassField(label: "Your IOUs", icon: "doc.text.fill") {
+            ForEach(ious) { iou in
+                HStack(spacing: 12) {
+                    Image(systemName: "seal.fill")
+                        .foregroundStyle(Brand.lime)
+                        .frame(width: 34, height: 34)
+                        .background(Brand.lime.opacity(0.12), in: Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(iou.egocAmount, specifier: "%.2f") EGOC").font(.subheadline.weight(.semibold)).foregroundStyle(Brand.text)
+                        Text("\(iou.payment) · \(iou.issuedAt.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption).foregroundStyle(Brand.muted)
+                    }
+                    Spacer()
+                    Button("Open") { opening = iou }
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Brand.lime)
+                    ShareLink(item: iou.file) { Image(systemName: "square.and.arrow.up") }
+                        .foregroundStyle(Brand.lime)
+                }
+            }
+        }
     }
 
     private var payAsset: ExternalAsset? { model.externalAssets.first { $0.asset == coin } }
@@ -309,36 +340,42 @@ struct OpenIOUView: View {
     @State private var problem: String?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if let record {
-                    Section("Allocation") {
-                        ForEach(record.keys.sorted(), id: \.self) { key in
-                            LabeledContent(key.replacingOccurrences(of: "_", with: " "), value: "\(record[key] ?? "")")
-                                .font(.footnote)
-                        }
-                    }
-                } else {
-                    Section {
-                        SecureField("IOU password", text: $password)
-                        Button("Open") {
-                            do {
-                                record = try Presale.open(try Data(contentsOf: iou.file), password: password)
-                                problem = nil
-                            } catch {
-                                problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                            }
-                        }
-                        .disabled(password.isEmpty)
-                    }
-                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
+        FlowSheet(icon: record == nil ? "lock.doc.fill" : "doc.text.magnifyingglass",
+                  title: record == nil ? "Open IOU" : "Allocation",
+                  subtitle: String(format: "%.2f EGOC · ", iou.egocAmount) + iou.payment) {
+            if let record {
+                SummaryCard(rows: record.keys.sorted().map {
+                    .init(label: $0.replacingOccurrences(of: "_", with: " ").capitalized, value: "\(record[$0] ?? "")")
+                })
+            } else {
+                GlassField(label: "IOU password", icon: "key.fill") {
+                    SecureField("Password", text: $password).glassInput().onSubmit(open)
                 }
+                if let problem { ProblemBanner(text: problem) }
             }
-            .scrollContentBackground(.hidden)
-            .screenBackground()
-            .navigationTitle("IOU")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        } footer: {
+            if record != nil {
+                Button("Done") { dismiss() }.buttonStyle(GlowButtonStyle())
+            } else {
+                Button("Open", action: open).buttonStyle(GlowButtonStyle()).disabled(password.isEmpty)
+            }
         }
     }
+
+    private func open() {
+        guard !password.isEmpty else { return }
+        do {
+            let opened = try Presale.open(try Data(contentsOf: iou.file), password: password)
+            withAnimation(.spring) { record = opened }
+            problem = nil
+            Haptics.success()
+        } catch {
+            Haptics.warning()
+            problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

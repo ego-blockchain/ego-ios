@@ -240,47 +240,71 @@ struct OfferDetailView: View {
         let profile = listing.makerProfile
         let meta = MarketAssets.meta(offer.asset)
         let buying = offer.side == .sell
-        Form {
-            Section("Price") {
-                LabeledContent("Per \(meta.symbol)", value: unitPriceText(offer, egocUsd: egocUsd))
-                LabeledContent("Pricing", value: offer.price.marginLabel ?? "Fixed price")
-                LabeledContent("Limits", value: "\(MarketAssets.number(offer.minMicro, asset: offer.asset)) – \(MarketAssets.amount(offer.maxMicro, asset: offer.asset))")
-                LabeledContent("Pay within", value: paymentWindowLabel(seconds: offer.paymentWindowSecs))
-                if meta.group != .ego {
-                    LabeledContent("Escrow on", value: meta.chain)
-                }
-                if let country = offer.country, !country.isEmpty {
-                    LabeledContent("Country", value: country)
-                }
-            }
-            Section("Payment methods") {
-                ForEach(offer.methods, id: \.self) { Text(PaymentMethods.label($0)) }
-            }
-            if !offer.terms.isEmpty {
-                Section(buying ? "Seller's terms" : "Buyer's terms") {
-                    Text(offer.terms)
-                        .textSelection(.enabled)
-                }
-            }
-            Section(buying ? "Seller" : "Buyer") {
-                LabeledContent("Address", value: shortAddress(offer.maker))
-                LabeledContent("Record", value: profile.summary)
-                LabeledContent("Feedback", value: "\(profile.positive) good · \(profile.neutral) neutral · \(profile.negative) bad")
-                if profile.disputesLost > 0 {
-                    LabeledContent("Disputes lost", value: "\(profile.disputesLost)")
-                        .foregroundStyle(Brand.danger)
-                }
-            }
-            Section {
-                Text(mine
-                     ? "This is your offer. Manage it in Ego Desktop."
-                     : "To \(buying ? "buy from" : "sell to") this trader, open P2P Trade in Ego Desktop with the same wallet.")
+        GlassPage {
+            VStack(spacing: 6) {
+                Text(buying ? "Buy \(meta.symbol)" : "Sell \(meta.symbol)")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundStyle(Brand.muted)
+                Text(unitPriceText(offer, egocUsd: egocUsd))
+                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Brand.glow)
+                    .multilineTextAlignment(.center)
+                Text("per \(meta.symbol) · \(offer.price.marginLabel ?? "Fixed price")")
                     .font(.footnote)
                     .foregroundStyle(Brand.muted)
             }
+            .padding(.vertical, 8)
+            .reveal(0.02)
+            SummaryCard(rows: [
+                .init(label: "Limits", value: "\(MarketAssets.number(offer.minMicro, asset: offer.asset)) – \(MarketAssets.amount(offer.maxMicro, asset: offer.asset))"),
+                .init(label: "Pay within", value: paymentWindowLabel(seconds: offer.paymentWindowSecs)),
+            ] + (meta.group != .ego ? [.init(label: "Escrow on", value: meta.chain)] : [])
+              + ((offer.country ?? "").isEmpty ? [] : [.init(label: "Country", value: offer.country ?? "")]))
+            .reveal(0.06)
+            GlassField(label: "Payment methods", icon: "creditcard") {
+                FlowLayout(spacing: 8) {
+                    ForEach(offer.methods, id: \.self) { method in
+                        Text(PaymentMethods.label(method))
+                            .font(.system(.caption, design: .rounded, weight: .bold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Brand.lime.opacity(0.1), in: Capsule())
+                            .overlay(Capsule().stroke(Brand.lime.opacity(0.3)))
+                            .foregroundStyle(Brand.text)
+                    }
+                }
+            }
+            .reveal(0.1)
+            if !offer.terms.isEmpty {
+                GlassField(label: buying ? "Seller's terms" : "Buyer's terms", icon: "doc.plaintext") {
+                    Text(offer.terms)
+                        .font(.subheadline)
+                        .foregroundStyle(Brand.text)
+                        .textSelection(.enabled)
+                }
+                .reveal(0.13)
+            }
+            GlassField(label: buying ? "Seller" : "Buyer", icon: "person.crop.circle.badge.checkmark") {
+                Text(shortAddress(offer.maker)).font(.system(.callout, design: .monospaced)).foregroundStyle(Brand.text)
+                Text(profile.summary).font(.subheadline).foregroundStyle(Brand.muted)
+                HStack(spacing: 14) {
+                    Label("\(profile.positive)", systemImage: "hand.thumbsup.fill").foregroundStyle(Brand.mint)
+                    Label("\(profile.neutral)", systemImage: "minus.circle.fill").foregroundStyle(Brand.muted)
+                    Label("\(profile.negative)", systemImage: "hand.thumbsdown.fill").foregroundStyle(Brand.danger)
+                }
+                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("\(profile.positive) good, \(profile.neutral) neutral, \(profile.negative) bad")
+            }
+            .reveal(0.16)
+            if profile.disputesLost > 0 {
+                NoteCard(text: "Lost \(profile.disputesLost) dispute\(profile.disputesLost == 1 ? "" : "s").", icon: "exclamationmark.triangle.fill", tint: Brand.danger)
+            }
+            NoteCard(text: mine
+                     ? "This is your offer. Manage it in Ego Desktop."
+                     : "To \(buying ? "buy from" : "sell to") this trader, open P2P Trade in Ego Desktop with the same wallet.",
+                     icon: "desktopcomputer")
         }
-        .scrollContentBackground(.hidden)
-        .screenBackground()
         .navigationTitle(buying ? "Buy \(meta.symbol)" : "Sell \(meta.symbol)")
         .navigationBarTitleDisplayMode(.inline)
     }
