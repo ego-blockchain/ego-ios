@@ -135,8 +135,16 @@ final class AppModel: ObservableObject {
     }
 
     func revealPhrase() async throws -> [String] {
-        let seed = try await vault.readSeed(reason: "Show your recovery phrase")
+        let reason = "Show your recovery phrase"
+        let context = try await vault.authenticate(reason: reason)
+        let seed = try await vault.readSeed(reason: reason, context: context)
         return Mnemonic.words(for: seed)
+    }
+
+    /// Removes the wallet from this iPhone once its owner confirms with Face ID.
+    func logOut() async throws {
+        _ = try await vault.authenticate(reason: "Log out of Ego Wallet on this iPhone")
+        deleteWallet()
     }
 
     func lock() {

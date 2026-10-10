@@ -53,12 +53,26 @@ struct SeedVault {
         UserDefaults.standard.set(address, forKey: addressKey)
     }
 
-    func readSeed(reason: String) async throws -> [UInt8] {
+    /// Asks for Face ID, or the passcode if Face ID isn't available. Passing
+    /// the context to readSeed then opens the keychain without asking again.
+    func authenticate(reason: String) async throws -> LAContext {
+        let context = LAContext()
+        do {
+            try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+            return context
+        } catch let error as LAError where [.userCancel, .appCancel, .systemCancel].contains(error.code) {
+            throw VaultError.cancelled
+        } catch let error as LAError where error.code == .passcodeNotSet {
+            throw VaultError.noPasscode
+        }
+    }
+
+    func readSeed(reason: String, context given: LAContext? = nil) async throws -> [UInt8] {
         let service = self.service
         let account = self.account
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let context = LAContext()
+                let context = given ?? LAContext()
                 context.localizedReason = reason
                 let query: [String: Any] = [
                     kSecClass as String: kSecClassGenericPassword,

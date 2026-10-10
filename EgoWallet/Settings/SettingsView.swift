@@ -46,25 +46,39 @@ struct SettingsView: View {
                 Section {
                     Button("Lock wallet") { app.lock() }
                 }
+                Section("About") {
+                    Link("Terms of Service", destination: Legal.terms)
+                    Link("Privacy Policy", destination: Legal.privacy)
+                }
                 Section {
-                    Button("Remove wallet from this iPhone", role: .destructive) { confirmRemove = true }
+                    Button("Log out", role: .destructive) { confirmRemove = true }
                 } footer: {
-                    Text("Your coins stay on the network. You'll need your 24 words to get the wallet back.")
+                    Text("Logging out removes the wallet from this iPhone. Your coins stay on the network; you'll need your 24 words or raw seed to log back in.")
                 }
             }
             .scrollContentBackground(.hidden)
             .screenBackground()
             .navigationTitle("Settings")
-            .confirmationDialog("Remove this wallet from the iPhone?", isPresented: $confirmRemove, titleVisibility: .visible) {
-                Button("Remove wallet", role: .destructive) { app.deleteWallet() }
+            .confirmationDialog("Log out of Ego Wallet?", isPresented: $confirmRemove, titleVisibility: .visible) {
+                Button("Log out", role: .destructive) { Task { await logOut() } }
             } message: {
-                Text("Only do this if your 24 words are written down. Without them the wallet is gone for good.")
+                Text("This removes the wallet from this iPhone. Only do it if your 24 words or raw seed are written down. Without them the wallet is gone for good.")
             }
             .task { knownGateways = await app.directory.known.count }
             .onDisappear {
                 phrase = nil
                 copied = false
             }
+        }
+    }
+
+    private func logOut() async {
+        do {
+            try await app.logOut()
+        } catch VaultError.cancelled {
+            problem = nil
+        } catch {
+            problem = app.message(for: error)
         }
     }
 

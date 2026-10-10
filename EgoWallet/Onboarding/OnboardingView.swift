@@ -1,7 +1,14 @@
 import EgoKit
 import SwiftUI
 
+enum Legal {
+    static let terms = URL(string: "https://egoblockchain.com/terms")!
+    static let privacy = URL(string: "https://egoblockchain.com/privacy")!
+}
+
 struct OnboardingView: View {
+    @AppStorage("ego.legal.accepted") private var accepted = false
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 28) {
@@ -17,15 +24,43 @@ struct OnboardingView: View {
                 }
                 Spacer()
                 VStack(spacing: 12) {
+                    agreement
                     NavigationLink("Create a new wallet") { CreateWalletView() }
                         .buttonStyle(PrimaryButtonStyle())
+                        .disabled(!accepted)
+                        .opacity(accepted ? 1 : 0.4)
                     NavigationLink("I already have a wallet") { ImportWalletView() }
                         .buttonStyle(SecondaryButtonStyle())
+                        .disabled(!accepted)
+                        .opacity(accepted ? 1 : 0.4)
                 }
             }
             .padding(24)
             .screenBackground()
         }
+    }
+}
+
+extension OnboardingView {
+    private var agreement: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button {
+                accepted.toggle()
+            } label: {
+                Image(systemName: accepted ? "checkmark.square.fill" : "square")
+                    .font(.title3)
+                    .foregroundStyle(accepted ? Brand.lime : Brand.muted)
+            }
+            .accessibilityLabel("I agree to the Terms of Service and Privacy Policy")
+            .accessibilityValue(accepted ? "Checked" : "Not checked")
+            Text("I agree to the [Terms of Service](https://egoblockchain.com/terms) and [Privacy Policy](https://egoblockchain.com/privacy).")
+                .font(.footnote)
+                .foregroundStyle(Brand.muted)
+                .tint(Brand.lime)
+                .accessibilityHidden(true)
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 4)
     }
 }
 
