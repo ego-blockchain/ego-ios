@@ -345,6 +345,8 @@ final class AppModel: ObservableObject {
             }
             shieldedNotes = notes
             shieldedProblem = nil
+        } catch GatewayError.rpc(AppModel.notHere, _) {
+            shieldedProblem = "No gateway can look up shielded notes yet. It needs a gateway running the latest Ego Desktop."
         } catch {
             shieldedProblem = message(for: error)
         }
