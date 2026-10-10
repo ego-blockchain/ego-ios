@@ -37,4 +37,27 @@ final class ExternalCoinsTests: XCTestCase {
         XCTAssertEqual(list[1].decimals, 18)
         XCTAssertEqual(list[0].explorerURL?.absoluteString, "https://blockstream.info/address/bc1qexample")
     }
+
+    /// Addresses ego-wallet-core gives for this seed. The Wallet Core workflow
+    /// checks the library against Ego Desktop's own derivation, so these are
+    /// also what Ego Desktop shows; a rebuilt library must keep them.
+    func testTheLibraryDerivesEgoDesktopsAddresses() throws {
+        #if canImport(EgoWalletCore)
+        let list = try ExternalWallet.assets(seed: [UInt8](repeating: 7, count: 32))
+        XCTAssertEqual(Dictionary(uniqueKeysWithValues: list.map { ($0.asset, $0.address) }), [
+            "BTC": "bc1qz5fsxpk6s5y92dcn73j84drhrrdh2rjlu2efqh",
+            "ETH": "0x13cCB7A7f8d13151382CD793992bA54aFF5b7A43",
+            "BNB": "0xFF7a95B055662D03FaE6F56e1cA914BF656b5e93",
+            "SOL": "AMFULyHvZpATpqfBVReLUXBV6xXfxcEdvaN3CNzRTNWK",
+            "ADA": "addr1vx9fm33sanu5k7c0smn7g9fetlna27hfnkcr8stgar3g9pcxm3730",
+            "XRP": "rUg5aL1DeHDwHXG62CRyBCapq8cArMAyhp",
+            "TRX": "TY6pvrSqsNM4cR5vpqvoTW4DPCob4krzip",
+            "LTC": "ltc1q0mwuh88l6hydr2ckh7ut42cc880njw9slrh7f2",
+            "DOGE": "DE1t437YYWgMUxaxm7gTtp8EkJq6HtBoZE",
+            "USDT": "0x13cCB7A7f8d13151382CD793992bA54aFF5b7A43",
+            "USDC": "0x13cCB7A7f8d13151382CD793992bA54aFF5b7A43",
+        ])
+        XCTAssertThrowsError(try ExternalWallet.derive(seed: [1, 2, 3]))
+        #endif
+    }
 }
