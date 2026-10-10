@@ -16,7 +16,7 @@ Ego Wallet for iPhone holds EGOC, shows live Ego storage capacity, joins the Gov
 2. `xcodegen generate` in this folder
 3. `open EgoWallet.xcodeproj`, choose your team under Signing & Capabilities, and run it on a device or simulator.
 4. Or run `./run.sh` to build and launch it in the iPhone 16 Pro simulator (`./run.sh "iPhone 16"` picks another).
-5. `cd EgoKit && swift test` runs the shared tests. All 53 pass.
+5. `cd EgoKit && swift test` runs the shared tests. All 54 pass.
 
 The wallet keeps its seed in the Keychain behind Face ID or the passcode. The iPhone needs a passcode set.
 

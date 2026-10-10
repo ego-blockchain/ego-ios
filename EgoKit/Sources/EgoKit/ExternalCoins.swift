@@ -323,21 +323,32 @@ public enum ExternalSendError: Error, Equatable, LocalizedError {
 public enum ExternalSend {
     /// Chains the phone can send on so far.
     public static func canSend(_ asset: ExternalAsset) -> Bool {
-        ["ETH", "BNB"].contains(asset.chain)
+        ["ETH", "BNB", "BTC", "LTC"].contains(asset.chain)
     }
+
+    /// Esplora APIs for coins and broadcasting, as on Ego Desktop's explorer links.
+    static let esplora = ["BTC": "https://blockstream.info/api", "LTC": "https://litecoinspace.org/api"]
 
     public static func isValidAddress(_ text: String, for asset: ExternalAsset) -> Bool {
         let t = text.trimmingCharacters(in: .whitespaces)
         switch asset.chain {
         case "ETH", "BNB":
             return t.count == 42 && t.hasPrefix("0x") && t.dropFirst(2).allSatisfy(\.isHexDigit)
+        case "BTC":
+            // The library checks the checksum and type before signing.
+            return (25...90).contains(t.count) && (t.lowercased().hasPrefix("bc1") || t.hasPrefix("1") || t.hasPrefix("3"))
+        case "LTC":
+            return (25...90).contains(t.count) && (t.lowercased().hasPrefix("ltc1") || t.hasPrefix("L") || t.hasPrefix("M") || t.hasPrefix("3"))
         default:
             return !t.isEmpty
         }
     }
 
     public static func explorerTxURL(_ asset: ExternalAsset, hash: String) -> URL? {
-        let prefix = ["ETH": "https://etherscan.io/tx/", "BNB": "https://bscscan.com/tx/"][asset.chain]
+        let prefix = [
+            "ETH": "https://etherscan.io/tx/", "BNB": "https://bscscan.com/tx/",
+            "BTC": "https://blockstream.info/tx/", "LTC": "https://litecoinspace.org/tx/",
+        ][asset.chain]
         return prefix.flatMap { URL(string: $0 + hash) }
     }
 
@@ -349,6 +360,9 @@ public enum ExternalSend {
         guard canSend(asset) else { throw ExternalSendError.notYet(asset.asset) }
         let recipient = to.trimmingCharacters(in: .whitespaces)
         guard isValidAddress(recipient, for: asset) else { throw ExternalSendError.badAddress(ExternalAsset.networkName(asset.chain)) }
+        if let base = esplora[asset.chain] {
+            return try await prepareUTXO(asset, base: base, seed: seed, to: recipient, amount: amount, balance: balance)
+        }
         let nonceHex = try await ExternalBalances.evmHex(asset.chain, "eth_getTransactionCount", [asset.address, "pending"])
         let gasPrice = try await ExternalBalances.evmHex(asset.chain, "eth_gasPrice", [])
         var request: [String: Any] = [
@@ -356,7 +370,7 @@ public enum ExternalSend {
             "to": recipient, "amount": amount.trimmingCharacters(in: .whitespaces), "decimals": asset.decimals,
         ]
         if let contract = asset.contract { request["contract"] = contract }
-        let signed = try sign(seed: seed, request: request)
+        let signed = try sign(seed: seed, request: request, with: ego_wallet_sign_evm)
         let native = asset.contract == nil ? asset.asset : asset.chain
         let prepared = PreparedTransfer(
             asset: asset, to: recipient, raw: signed.raw, hash: signed.hash,
@@ -381,7 +395,52 @@ public enum ExternalSend {
         }
     }
 
+    static func prepareUTXO(_ asset: ExternalAsset, base: String, seed: [UInt8], to: String, amount: String, balance: ExternalBalance?) async throws -> PreparedTransfer {
+        let coinsData = try await ExternalBalances.fetch(URLRequest(url: URL(string: "\(base)/address/\(asset.address)/utxo")!))
+        let coins = (try JSONSerialization.jsonObject(with: coinsData) as? [[String: Any]] ?? []).compactMap { c -> [String: Any]? in
+            guard let txid = c["txid"] as? String, let vout = c["vout"] as? Int, let value = (c["value"] as? NSNumber)?.uint64Value else { return nil }
+            return ["txid": txid, "vout": vout, "value": value]
+        }
+        guard !coins.isEmpty else { throw ExternalSendError.insufficient("This address has no \(asset.asset) to send yet.") }
+        let rate = try await feeRate(base)
+        let signed = try sign(seed: seed, request: [
+            "chain": asset.chain, "to": to, "amount": amount.trimmingCharacters(in: .whitespaces),
+            "fee_rate": rate, "utxos": coins,
+        ], with: ego_wallet_sign_utxo)
+        let prepared = PreparedTransfer(
+            asset: asset, to: to, raw: signed.raw, hash: signed.hash,
+            amountUnits: signed.amountUnits, feeUnits: signed.fee, feeDecimals: 8, feeSymbol: asset.asset
+        )
+        try checkFunds(prepared, balance: balance, nativeBalance: balance)
+        return prepared
+    }
+
+    /// The network's estimate for confirming within about six blocks, never below 2 sat/vB.
+    /// litecoinspace runs mempool.space, which has no /fee-estimates; its half-hour rate is the same idea.
+    static func feeRate(_ base: String) async throws -> UInt64 {
+        let rate: NSNumber?
+        if base.contains("litecoinspace") {
+            rate = try await ExternalBalances.getJSON("\(base)/v1/fees/recommended")["halfHourFee"] as? NSNumber
+        } else {
+            let estimates = try await ExternalBalances.getJSON("\(base)/fee-estimates")
+            rate = (estimates["6"] ?? estimates["3"] ?? estimates["2"]) as? NSNumber
+        }
+        return max(2, UInt64((rate?.doubleValue ?? 10).rounded(.up)))
+    }
+
     public static func broadcast(_ p: PreparedTransfer) async throws -> String {
+        if let base = esplora[p.asset.chain] {
+            var request = URLRequest(url: URL(string: "\(base)/tx")!)
+            request.httpMethod = "POST"
+            request.httpBody = Data(p.raw.utf8)
+            request.timeoutInterval = 20
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, text.count == 64 else {
+                throw ExternalSendError.rejected(text.isEmpty ? "no answer" : text)
+            }
+            return text
+        }
         var lastError: Error = ExternalSendError.rejected("no node answered")
         for node in ExternalBalances.evmNodes[p.asset.chain] ?? [] {
             do {
@@ -408,12 +467,14 @@ public enum ExternalSend {
         enum CodingKeys: String, CodingKey { case raw, hash, fee, amountUnits = "amount_units" }
     }
 
-    static func sign(seed: [UInt8], request: [String: Any]) throws -> Signed {
+    typealias Signer = (UnsafePointer<UInt8>?, Int, UnsafePointer<CChar>?) -> UnsafeMutablePointer<CChar>?
+
+    static func sign(seed: [UInt8], request: [String: Any], with signer: Signer) throws -> Signed {
         #if canImport(EgoWalletCore)
         let body = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
         let json: String = seed.withUnsafeBufferPointer { buffer in
             body.withCString { cBody in
-                guard let raw = ego_wallet_sign_evm(buffer.baseAddress, buffer.count, cBody) else { return "" }
+                guard let raw = signer(buffer.baseAddress, buffer.count, cBody) else { return "" }
                 defer { ego_wallet_string_free(raw) }
                 return String(cString: raw)
             }

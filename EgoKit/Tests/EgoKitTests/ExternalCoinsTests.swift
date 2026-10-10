@@ -94,4 +94,20 @@ final class ExternalCoinsTests: XCTestCase {
         XCTAssertFalse(ExternalSend.isValidAddress("bc1qz5fsxpk6s5y92dcn73j84drhrrdh2rjlu2efqh", for: eth))
         XCTAssertEqual(ExternalSend.explorerTxURL(eth, hash: "0xab")?.absoluteString, "https://etherscan.io/tx/0xab")
     }
+
+    func testBitcoinAndLitecoinAddressesAreRoughlyCheckedBeforeTheLibrary() {
+        let btc = ExternalAsset(asset: "BTC", name: "Bitcoin", chain: "BTC", address: "bc1q", addressType: "P2WPKH", explorerPrefix: "", contract: nil, decimals: 8)
+        let ltc = ExternalAsset(asset: "LTC", name: "Litecoin", chain: "LTC", address: "ltc1q", addressType: "P2WPKH", explorerPrefix: "", contract: nil, decimals: 8)
+        XCTAssertTrue(ExternalSend.canSend(btc) && ExternalSend.canSend(ltc))
+        for a in ["bc1qz5fsxpk6s5y92dcn73j84drhrrdh2rjlu2efqh", "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+                  "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"] {
+            XCTAssertTrue(ExternalSend.isValidAddress(a, for: btc), a)
+        }
+        XCTAssertFalse(ExternalSend.isValidAddress("ltc1qr07zu594qf63xm7l7x6pu3a2v39m2z6hh5pp4t", for: btc))
+        XCTAssertFalse(ExternalSend.isValidAddress("0x13cCB7A7f8d13151382CD793992bA54aFF5b7A43", for: btc))
+        XCTAssertTrue(ExternalSend.isValidAddress("ltc1qr07zu594qf63xm7l7x6pu3a2v39m2z6hh5pp4t", for: ltc))
+        XCTAssertFalse(ExternalSend.isValidAddress("bc1qz5fsxpk6s5y92dcn73j84drhrrdh2rjlu2efqh", for: ltc))
+        XCTAssertEqual(ExternalSend.explorerTxURL(btc, hash: "ab")?.absoluteString, "https://blockstream.info/tx/ab")
+        XCTAssertEqual(ExternalSend.explorerTxURL(ltc, hash: "ab")?.absoluteString, "https://litecoinspace.org/tx/ab")
+    }
 }
