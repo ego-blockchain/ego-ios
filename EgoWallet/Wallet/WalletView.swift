@@ -12,6 +12,7 @@ struct WalletView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     balanceCard
+                    EGUSDCard()
                     EarningsCard()
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
@@ -71,6 +72,7 @@ struct ActivitySection: View {
     @AppStorage("ego.activity.pageSize") private var pageSize = 10
     @State private var page = 0
     @State private var loadingOlder = false
+    @State private var selected: HistoryItem?
 
     private var size: Int { ActivitySection.pageSizes.contains(pageSize) ? pageSize : 10 }
     private var pageCount: Int { max(1, (model.history.count + size - 1) / size) }
@@ -99,7 +101,11 @@ struct ActivitySection: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(shown) { item in
-                        ActivityRow(item: item, me: model.address)
+                        Button { selected = item } label: {
+                            ActivityRow(item: item, me: model.address)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                         if item.id != shown.last?.id {
                             Divider().overlay(Brand.line)
                         }
@@ -111,6 +117,7 @@ struct ActivitySection: View {
                 }
             }
         }
+        .sheet(item: $selected) { TransactionDetailView(item: $0, me: model.address) }
         .onChange(of: pageSize) { _, _ in page = 0 }
         .onChange(of: model.history.count) { _, _ in page = min(page, pageCount - 1) }
     }
@@ -168,38 +175,165 @@ struct TrailingIconLabelStyle: LabelStyle {
     }
 }
 
+/// How a transaction reads from this wallet's side.
+struct ActivityKind {
+    let title: String
+    let counterparty: String?
+    let amount: String
+    let incoming: Bool
+    let icon: String
+
+    init(_ item: HistoryItem, me: String) {
+        let incoming = item.to == me && item.from != me
+        switch item.txType {
+        case "credits_mint":
+            let credits = EGUSD.credits(forBurning: item.amount, priceMicroUsd: Self.memoNumber(item.memo, "credits_mint:") ?? 0)
+            title = "Converted to EGUSD"
+            counterparty = credits > 0 ? "Got \(EGUSD.format(credits))" : nil
+            amount = "−\(Amount.format(item.amount, maxDecimals: 4))"
+            self.incoming = false
+            icon = "arrow.triangle.2.circlepath"
+        case "credits_pay":
+            let credits = Self.memoNumber(item.memo, "credits_pay:") ?? 0
+            title = incoming ? "Received EGUSD" : "Paid EGUSD"
+            counterparty = incoming ? "From \(shortAddress(item.from))" : "To \(shortAddress(item.to))"
+            amount = "\(incoming ? "+" : "−")\(EGUSD.format(credits))"
+            self.incoming = incoming
+            icon = "dollarsign.circle"
+        default:
+            title = incoming ? "Received" : "Sent"
+            counterparty = incoming ? "From \(shortAddress(item.from))" : "To \(shortAddress(item.to))"
+            amount = "\(incoming ? "+" : "−")\(Amount.format(item.amount, maxDecimals: 4))"
+            self.incoming = incoming
+            icon = incoming ? "arrow.down.left" : "arrow.up.right"
+        }
+    }
+
+    static func memoNumber(_ memo: String?, _ prefix: String) -> UInt64? {
+        guard let memo, memo.hasPrefix(prefix) else { return nil }
+        return memo.dropFirst(prefix.count).split(separator: ":").first.flatMap { UInt64($0) }
+    }
+}
+
 struct ActivityRow: View {
     let item: HistoryItem
     let me: String
 
     var body: some View {
-        let incoming = item.to == me && item.from != me
+        let kind = ActivityKind(item, me: me)
         HStack(spacing: 12) {
-            Image(systemName: incoming ? "arrow.down.left" : "arrow.up.right")
+            Image(systemName: kind.icon)
                 .font(.system(size: 14, weight: .bold))
                 .frame(width: 34, height: 34)
-                .background((incoming ? Brand.mint : Brand.lime).opacity(0.15))
-                .foregroundStyle(incoming ? Brand.mint : Brand.lime)
+                .background((kind.incoming ? Brand.mint : Brand.lime).opacity(0.15))
+                .foregroundStyle(kind.incoming ? Brand.mint : Brand.lime)
                 .clipShape(Circle())
             VStack(alignment: .leading, spacing: 3) {
-                Text(incoming ? "Received" : "Sent")
+                Text(kind.title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Brand.text)
-                Text(incoming ? "From \(shortAddress(item.from))" : "To \(shortAddress(item.to))")
-                    .font(.caption)
-                    .foregroundStyle(Brand.muted)
+                if let counterparty = kind.counterparty {
+                    Text(counterparty)
+                        .font(.caption)
+                        .foregroundStyle(Brand.muted)
+                }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
-                Text("\(incoming ? "+" : "−")\(Amount.format(item.amount, maxDecimals: 4))")
+                Text(kind.amount)
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(incoming ? Brand.mint : Brand.text)
+                    .foregroundStyle(kind.incoming ? Brand.mint : Brand.text)
                 Text(item.blockHeight == nil ? "Pending" : relativeTime(item.timestamp))
                     .font(.caption)
                     .foregroundStyle(item.blockHeight == nil ? Brand.warning : Brand.muted)
             }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Brand.muted.opacity(0.6))
         }
         .padding(.vertical, 10)
+    }
+}
+
+/// Everything about one transaction, opened from Activity.
+struct TransactionDetailView: View {
+    let item: HistoryItem
+    let me: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied: String?
+
+    var body: some View {
+        let kind = ActivityKind(item, me: me)
+        NavigationStack {
+            Form {
+                Section {
+                    VStack(spacing: 8) {
+                        Image(systemName: kind.icon)
+                            .font(.system(size: 22, weight: .bold))
+                            .frame(width: 52, height: 52)
+                            .background((kind.incoming ? Brand.mint : Brand.lime).opacity(0.15))
+                            .foregroundStyle(kind.incoming ? Brand.mint : Brand.lime)
+                            .clipShape(Circle())
+                        Text(kind.amount + (item.txType == "credits_pay" ? "" : " EGOC"))
+                            .font(.system(.title, design: .rounded, weight: .bold))
+                            .foregroundStyle(kind.incoming ? Brand.mint : Brand.text)
+                        Text(kind.title)
+                            .foregroundStyle(Brand.muted)
+                        if let counterparty = kind.counterparty, item.txType == "credits_mint" {
+                            Text(counterparty).font(.footnote).foregroundStyle(Brand.muted)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                }
+                Section {
+                    LabeledContent("Status") {
+                        if let height = item.blockHeight {
+                            Text("Confirmed in block \(height)").foregroundStyle(Brand.mint)
+                        } else {
+                            Text("Pending").foregroundStyle(Brand.warning)
+                        }
+                    }
+                    LabeledContent("Date", value: Date(timeIntervalSince1970: TimeInterval(item.timestamp)).formatted(date: .abbreviated, time: .standard))
+                    if let fee = item.feeUegoc {
+                        LabeledContent("Network fee", value: "\(Amount.format(fee)) EGOC")
+                    }
+                    if let memo = item.memo, !memo.isEmpty, item.txType != "credits_mint", item.txType != "credits_pay" {
+                        LabeledContent("Memo", value: memo)
+                    }
+                }
+                Section {
+                    copyable("From", item.from, mine: item.from == me)
+                    copyable("To", item.to, mine: item.to == me)
+                    copyable("Transaction", item.hash, mine: false)
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .navigationTitle("Transaction")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func copyable(_ label: String, _ value: String, mine: Bool) -> some View {
+        Button {
+            UIPasteboard.general.string = value
+            copied = label
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(label + (mine ? " (you)" : "")).font(.caption).foregroundStyle(Brand.muted)
+                    Spacer()
+                    Text(copied == label ? "Copied" : "Copy").font(.caption.weight(.semibold)).foregroundStyle(Brand.lime)
+                }
+                Text(value)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(Brand.text)
+                    .multilineTextAlignment(.leading)
+            }
+        }
     }
 }
 
@@ -353,4 +487,271 @@ enum QRCode {
         else { return nil }
         return UIImage(cgImage: cg)
     }
+}
+
+/// EGUSD on the Wallet screen, with Convert and Pay as in Ego Desktop.
+struct EGUSDCard: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var converting = false
+    @State private var paying = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionLabel(text: "EGUSD")
+                Spacer()
+                Text(model.credits.map(EGUSD.format) ?? "—")
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .foregroundStyle(Brand.text)
+                    .monospacedDigit()
+            }
+            Text(model.credits == nil
+                 ? "The gateway you're connected to doesn't report EGUSD yet."
+                 : "Stable dollars on Ego. 1 EGUSD is always $1.")
+                .font(.footnote)
+                .foregroundStyle(Brand.muted)
+            HStack(spacing: 12) {
+                Button {
+                    converting = true
+                } label: {
+                    Label("Convert", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+                Button {
+                    paying = true
+                } label: {
+                    Label("Pay", systemImage: "dollarsign.circle")
+                }
+                .buttonStyle(SecondaryButtonStyle())
+            }
+        }
+        .card()
+        .sheet(isPresented: $converting) { ConvertToEGUSDView() }
+        .sheet(isPresented: $paying) { PayEGUSDView() }
+    }
+}
+
+struct ConvertToEGUSDView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var amountText = ""
+    @State private var price: UInt64?
+    @State private var fee: UInt64?
+    @State private var reviewing = false
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var sentHash: String?
+
+    private var amount: UInt64? { Amount.parse(amountText) }
+    private var credits: UInt64 {
+        guard let amount, let price else { return 0 }
+        return EGUSD.credits(forBurning: amount, priceMicroUsd: price)
+    }
+    private var affordable: Bool {
+        guard let amount, let balance = model.balance else { return true }
+        return amount.addingReportingOverflow(fee ?? 0).partialValue <= balance
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let sentHash {
+                    Section {
+                        Label("Converted", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(Brand.mint)
+                        Text(sentHash)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    } footer: {
+                        Text("Your EGUSD shows once the network confirms it, usually within a few seconds.")
+                    }
+                    Section { Button("Done") { dismiss() } }
+                } else if reviewing, let amount, let price {
+                    Section("Check before converting") {
+                        LabeledContent("Burn", value: "\(Amount.format(amount)) EGOC")
+                        LabeledContent("Receive", value: EGUSD.format(credits))
+                        LabeledContent("EGOC price", value: "$\(Amount.format(price))")
+                        if let fee { LabeledContent("Network fee", value: "\(Amount.format(fee)) EGOC") }
+                    }
+                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
+                    Section {
+                        Button(busy ? "Converting…" : "Convert to \(EGUSD.format(credits))") { Task { await convert(amount, price: price) } }
+                            .disabled(busy)
+                        Button("Change something") { reviewing = false }
+                            .disabled(busy)
+                    } footer: {
+                        Text("The EGOC is burned. EGUSD can't be turned back into EGOC.")
+                    }
+                } else {
+                    Section {
+                        TextField("0.00", text: $amountText)
+                            .keyboardType(.decimalPad)
+                        if let balance = model.balance {
+                            Button("Use all (\(Amount.format(balance.saturatingSub(fee ?? 0))) EGOC)") {
+                                amountText = Amount.format(balance.saturatingSub(fee ?? 0))
+                            }
+                        }
+                        if !amountText.isEmpty && (amount == nil || amount == 0) {
+                            Text("Enter an amount with up to 6 decimals.").font(.caption).foregroundStyle(Brand.danger)
+                        } else if !affordable {
+                            Text("That's more than your balance after the network fee.").font(.caption).foregroundStyle(Brand.danger)
+                        }
+                    } header: {
+                        Text("EGOC to convert")
+                    } footer: {
+                        if let price {
+                            Text("At $\(Amount.format(price)) per EGOC you get \(EGUSD.format(credits)).")
+                        } else {
+                            Text("Getting the EGOC price…")
+                        }
+                    }
+                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
+                    Section {
+                        Button("Review") { reviewing = true }
+                            .disabled(price == nil || credits == 0 || !affordable)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .navigationTitle("Convert to EGUSD")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .task {
+                fee = await model.networkFee()
+                do {
+                    let p = try await model.egocPriceMicroUsd()
+                    if p > 0 { price = p } else { problem = "There's no EGOC price right now, so EGUSD can't be minted." }
+                } catch {
+                    problem = model.message(for: error)
+                }
+            }
+        }
+    }
+
+    private func convert(_ amount: UInt64, price: UInt64) async {
+        busy = true
+        problem = nil
+        do {
+            sentHash = try await model.convertToEGUSD(amount: amount, priceMicroUsd: price)
+        } catch {
+            problem = model.message(for: error)
+        }
+        busy = false
+    }
+}
+
+struct PayEGUSDView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var recipient = ""
+    @State private var amountText = ""
+    @State private var fee: UInt64?
+    @State private var reviewing = false
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var sentHash: String?
+    @State private var converting = false
+
+    private var credits: UInt64? { EGUSD.parse(amountText) }
+    private var to: String { recipient.trimmingCharacters(in: .whitespaces) }
+    private var recipientOK: Bool { EgoAddress.isValid(to) && to != model.address }
+    private var enough: Bool { (credits ?? 0) <= (model.credits ?? 0) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let sentHash {
+                    Section {
+                        Label("Sent", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(Brand.mint)
+                        Text(sentHash)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    } footer: {
+                        Text("It shows as pending until the network confirms it, usually within a few seconds.")
+                    }
+                    Section { Button("Done") { dismiss() } }
+                } else if reviewing, let credits {
+                    Section("Check before paying") {
+                        LabeledContent("To", value: shortAddress(to))
+                        LabeledContent("Amount", value: EGUSD.format(credits))
+                        if let fee { LabeledContent("Network fee", value: "\(Amount.format(fee)) EGOC") }
+                    }
+                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
+                    Section {
+                        Button(busy ? "Paying…" : "Pay \(EGUSD.format(credits))") { Task { await pay(credits) } }
+                            .disabled(busy)
+                        Button("Change something") { reviewing = false }
+                            .disabled(busy)
+                    } footer: {
+                        Text("A payment can't be reversed once it's sent. The network fee is paid in EGOC.")
+                    }
+                } else {
+                    if model.credits == nil {
+                        Section {
+                            Label("The gateway you're connected to doesn't report EGUSD balances yet, so a payment can't be checked before it's sent. Try again later.", systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(Brand.warning)
+                        }
+                    } else if model.credits == 0 {
+                        Section {
+                            Label("You don't have any EGUSD yet. Convert some EGOC first.", systemImage: "info.circle")
+                                .foregroundStyle(Brand.muted)
+                            Button("Convert EGOC") { converting = true }
+                        }
+                    } else if let credits = model.credits {
+                        Section { LabeledContent("You have", value: EGUSD.format(credits)) }
+                    }
+                    Section("Recipient") {
+                        TextField("egot1…", text: $recipient)
+                            .font(.system(.body, design: .monospaced))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        if !recipient.isEmpty && !recipientOK {
+                            Text(to == model.address ? "You can't pay yourself." : "That isn't an Ego address.")
+                                .font(.caption).foregroundStyle(Brand.danger)
+                        }
+                        Button("Paste") { recipient = UIPasteboard.general.string ?? recipient }
+                    }
+                    Section {
+                        TextField("$0.00", text: $amountText)
+                            .keyboardType(.decimalPad)
+                        if !amountText.isEmpty && credits == nil {
+                            Text("Enter dollars and cents, like 12.50.").font(.caption).foregroundStyle(Brand.danger)
+                        } else if !enough {
+                            Text("You have \(EGUSD.format(model.credits ?? 0)).").font(.caption).foregroundStyle(Brand.danger)
+                        }
+                    } header: {
+                        Text("Amount in EGUSD")
+                    }
+                    Section {
+                        Button("Review") { reviewing = true }
+                            .disabled(!recipientOK || credits == nil || !enough || model.credits == nil)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .navigationTitle("Pay EGUSD")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .task { fee = await model.networkFee() }
+            .sheet(isPresented: $converting) { ConvertToEGUSDView() }
+        }
+    }
+
+    private func pay(_ credits: UInt64) async {
+        busy = true
+        problem = nil
+        do {
+            sentHash = try await model.payEGUSD(to: to, credits: credits)
+        } catch {
+            problem = model.message(for: error)
+        }
+        busy = false
+    }
+}
+
+private extension UInt64 {
+    func saturatingSub(_ other: UInt64) -> UInt64 { self > other ? self - other : 0 }
 }

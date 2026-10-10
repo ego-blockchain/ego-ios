@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     @Published var phase: Phase
     @Published var address = ""
     @Published var balance: UInt64?
+    /// EGUSD credits (cents). Nil until a gateway that knows them answers.
+    @Published var credits: UInt64?
     @Published var history: [HistoryItem] = []
     /// The gateway returns the newest transactions up to a limit, with no way
     /// to skip ahead, so older pages are reached by asking for more.
@@ -162,6 +164,7 @@ final class AppModel: ObservableObject {
             balance = try await perform { try await $0.balance(of: address).uegoc }
             let limit = historyLimit
             history = try await perform { try await $0.history(of: address, limit: limit) }
+            credits = try? await perform { try await $0.credits(of: address).credits }
             problem = nil
         } catch {
             problem = message(for: error)
@@ -178,6 +181,34 @@ final class AppModel: ObservableObject {
         let address = key.address
         let info = try await perform { try await $0.nonce(of: address) }
         let tx = try Transactions.transfer(key: key, to: recipient, amount: amount, nonce: info.next, fee: info.feeUegoc, memo: memo)
+        return try await submit(tx)
+    }
+
+    /// The EGOC price validators will check a mint against, in µUSD.
+    func egocPriceMicroUsd() async throws -> UInt64 {
+        EGUSD.priceMicroUsd(try await perform { try await $0.egocPriceUsd() })
+    }
+
+    /// Burns `amount` µEGOC for EGUSD at the current price, like Convert in Ego Desktop.
+    func convertToEGUSD(amount: UInt64, priceMicroUsd: UInt64) async throws -> String {
+        guard let key else { throw WalletError.locked }
+        let address = key.address
+        let info = try await perform { try await $0.nonce(of: address) }
+        let tx = try Transactions.creditsMint(key: key, amount: amount, priceMicroUsd: priceMicroUsd, nonce: info.next, fee: info.feeUegoc)
+        return try await submit(tx)
+    }
+
+    func payEGUSD(to recipient: String, credits: UInt64) async throws -> String {
+        guard let key else { throw WalletError.locked }
+        let address = key.address
+        let info = try await perform { try await $0.nonce(of: address) }
+        let tx = try Transactions.creditsPay(key: key, to: recipient, credits: credits, nonce: info.next, fee: info.feeUegoc)
+        return try await submit(tx)
+    }
+
+    /// Sends a signed transaction. If the gateway errors after accepting it,
+    /// checks whether it landed anyway before reporting a failure.
+    private func submit(_ tx: SignedTransaction) async throws -> String {
         var hash = tx.hash
         do {
             hash = try await perform { try await $0.submit(tx) }.txHash
@@ -235,6 +266,7 @@ final class AppModel: ObservableObject {
         balance = nil
         history = []
         historyLimit = AppModel.historyStep
+        credits = nil
         problem = nil
         seedMissing = false
         phase = .onboarding
