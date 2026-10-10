@@ -60,4 +60,38 @@ final class ExternalCoinsTests: XCTestCase {
         XCTAssertThrowsError(try ExternalWallet.derive(seed: [1, 2, 3]))
         #endif
     }
+
+    func testDecimalStringsAddAndCompare() {
+        XCTAssertEqual(BigUnits.add("999", "1"), "1000")
+        XCTAssertEqual(BigUnits.add("1000000000000000000000", "252000"), "1000000000000000252000")
+        XCTAssertEqual(BigUnits.add("0", "0"), "0")
+        XCTAssertEqual(BigUnits.compare("10", "9"), .orderedDescending)
+        XCTAssertEqual(BigUnits.compare("0009", "9"), .orderedSame)
+        XCTAssertEqual(BigUnits.compare("123", "124"), .orderedAscending)
+    }
+
+    func testSendingChecksTheBalanceAndTheFeeCoin() throws {
+        let eth = ExternalAsset(asset: "ETH", name: "Ethereum", chain: "ETH", address: "0x1", addressType: "EVM", explorerPrefix: "", contract: nil, decimals: 18)
+        let usdt = ExternalAsset(asset: "USDT", name: "USDT", chain: "ETH", address: "0x1", addressType: "ERC-20", explorerPrefix: "", contract: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6)
+        func prepared(_ asset: ExternalAsset, amount: String, fee: String) -> PreparedTransfer {
+            PreparedTransfer(asset: asset, to: "0x2", raw: "", hash: "", amountUnits: amount, feeUnits: fee, feeDecimals: 18, feeSymbol: "ETH")
+        }
+        let oneEth = ExternalBalance(units: "1000000000000000000", decimals: 18)
+        XCTAssertNoThrow(try ExternalSend.checkFunds(prepared(eth, amount: "999000000000000000", fee: "1000000000000000"), balance: oneEth, nativeBalance: oneEth))
+        XCTAssertThrowsError(try ExternalSend.checkFunds(prepared(eth, amount: "999000000000000001", fee: "1000000000000000"), balance: oneEth, nativeBalance: oneEth), "the fee comes out of the same balance")
+        let tenUsdt = ExternalBalance(units: "10000000", decimals: 6)
+        XCTAssertNoThrow(try ExternalSend.checkFunds(prepared(usdt, amount: "10000000", fee: "1000"), balance: tenUsdt, nativeBalance: oneEth))
+        XCTAssertThrowsError(try ExternalSend.checkFunds(prepared(usdt, amount: "10000001", fee: "1000"), balance: tenUsdt, nativeBalance: oneEth))
+        XCTAssertThrowsError(try ExternalSend.checkFunds(prepared(usdt, amount: "1", fee: "1000"), balance: tenUsdt, nativeBalance: ExternalBalance(units: "999", decimals: 18)), "a token transfer needs ETH for the fee")
+    }
+
+    func testEvmAddressesAreCheckedBeforeSigning() {
+        let eth = ExternalAsset(asset: "ETH", name: "Ethereum", chain: "ETH", address: "0x1", addressType: "EVM", explorerPrefix: "", contract: nil, decimals: 18)
+        XCTAssertTrue(ExternalSend.isValidAddress("0x13cCB7A7f8d13151382CD793992bA54aFF5b7A43", for: eth))
+        XCTAssertTrue(ExternalSend.isValidAddress(" 0x13ccb7a7f8d13151382cd793992ba54aff5b7a43 ", for: eth))
+        XCTAssertFalse(ExternalSend.isValidAddress("0x13cCB7A7f8d13151382CD793992bA54aFF5b7A4", for: eth))
+        XCTAssertFalse(ExternalSend.isValidAddress("13cCB7A7f8d13151382CD793992bA54aFF5b7A43aa", for: eth))
+        XCTAssertFalse(ExternalSend.isValidAddress("bc1qz5fsxpk6s5y92dcn73j84drhrrdh2rjlu2efqh", for: eth))
+        XCTAssertEqual(ExternalSend.explorerTxURL(eth, hash: "0xab")?.absoluteString, "https://etherscan.io/tx/0xab")
+    }
 }

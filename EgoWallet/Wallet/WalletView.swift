@@ -764,8 +764,20 @@ private extension UInt64 {
 /// Coins on other chains, held at the addresses Ego Desktop derives from
 /// the same seed.
 struct OtherCoinsCard: View {
+    static let collapsedCount = 3
+
     @EnvironmentObject private var model: AppModel
     @State private var selected: ExternalAsset?
+    @AppStorage("ego.otherCoins.expanded") private var expanded = false
+
+    /// Coins holding something first, then Ego Desktop's order.
+    private var ordered: [ExternalAsset] {
+        let held = model.externalAssets.filter { model.externalBalances[$0.id].map { !$0.isZero } ?? false }
+        return held + model.externalAssets.filter { a in !held.contains(a) }
+    }
+    private var shown: [ExternalAsset] {
+        expanded ? ordered : Array(ordered.prefix(OtherCoinsCard.collapsedCount))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -776,12 +788,27 @@ struct OtherCoinsCard: View {
             } else if model.externalAssets.isEmpty {
                 Text("Loading…").font(.footnote).foregroundStyle(Brand.muted)
             }
-            ForEach(model.externalAssets) { asset in
+            ForEach(shown) { asset in
                 Button { selected = asset } label: { CoinRow(asset: asset) }
                     .buttonStyle(.plain)
-                if asset.id != model.externalAssets.last?.id {
+                if asset.id != shown.last?.id {
                     Divider().overlay(Brand.line)
                 }
+            }
+            if model.externalAssets.count > OtherCoinsCard.collapsedCount {
+                Button {
+                    withAnimation { expanded.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(expanded ? "Show less" : "Show all \(model.externalAssets.count)")
+                        Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    }
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Brand.lime)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+                }
+                .buttonStyle(.plain)
             }
         }
         .card()
@@ -856,12 +883,13 @@ struct CoinRow: View {
     }
 }
 
-/// One coin: its balance and where to receive it.
+/// One coin: its balance, with Send and Receive.
 struct CoinDetailView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     let asset: ExternalAsset
-    @State private var copied = false
+    @State private var sending = false
+    @State private var receiving = false
 
     var body: some View {
         NavigationStack {
@@ -878,39 +906,25 @@ struct CoinDetailView: View {
                             Text(problem).font(.caption).foregroundStyle(Brand.danger).multilineTextAlignment(.center)
                         }
                     }
-                    VStack(spacing: 14) {
-                        SectionLabel(text: "Receive \(asset.asset)")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        if let image = QRCode.image(for: asset.address) {
-                            Image(uiImage: image)
-                                .interpolation(.none)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 200, height: 200)
-                                .padding(12)
-                                .background(Color.white)
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        }
+                    HStack(spacing: 12) {
+                        Button { sending = true } label: { Label("Send", systemImage: "arrow.up.right") }
+                            .buttonStyle(PrimaryButtonStyle())
+                        Button { receiving = true } label: { Label("Receive", systemImage: "arrow.down.left") }
+                            .buttonStyle(SecondaryButtonStyle())
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        SectionLabel(text: "Your \(asset.asset) address")
                         Text(asset.address)
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(Brand.text)
-                            .multilineTextAlignment(.center)
                             .textSelection(.enabled)
-                        Label("Only send \(asset.asset) on \(ExternalAsset.networkName(asset.chain)) to this address. Coins sent on another network can be lost.", systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(Brand.warning)
-                        HStack(spacing: 12) {
-                            Button(copied ? "Copied" : "Copy address") {
-                                UIPasteboard.general.string = asset.address
-                                copied = true
-                            }
-                            .buttonStyle(PrimaryButtonStyle())
-                            if let url = asset.explorerURL {
-                                Link("Explorer", destination: url)
-                                    .buttonStyle(SecondaryButtonStyle())
-                            }
+                        if let url = asset.explorerURL {
+                            Link("View on explorer", destination: url)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(Brand.lime)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .card()
                 }
                 .padding(16)
@@ -919,6 +933,173 @@ struct CoinDetailView: View {
             .navigationTitle(asset.asset)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .sheet(isPresented: $receiving) { CoinReceiveView(asset: asset) }
+            .sheet(isPresented: $sending) { CoinSendView(asset: asset) }
         }
+    }
+}
+
+struct CoinReceiveView: View {
+    let asset: ExternalAsset
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    if let image = QRCode.image(for: asset.address) {
+                        Image(uiImage: image)
+                            .interpolation(.none)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 220, height: 220)
+                            .padding(12)
+                            .background(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    }
+                    Text(asset.address)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(Brand.text)
+                        .multilineTextAlignment(.center)
+                        .textSelection(.enabled)
+                    Label("Only send \(asset.asset) on \(ExternalAsset.networkName(asset.chain)) to this address. Coins sent on another network can be lost.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(Brand.warning)
+                    Button(copied ? "Copied" : "Copy address") {
+                        UIPasteboard.general.string = asset.address
+                        copied = true
+                    }
+                    .buttonStyle(PrimaryButtonStyle())
+                    ShareLink(item: asset.address) { Label("Share", systemImage: "square.and.arrow.up") }
+                        .buttonStyle(SecondaryButtonStyle())
+                }
+                .padding(24)
+            }
+            .screenBackground()
+            .navigationTitle("Receive \(asset.asset)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+struct CoinSendView: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    let asset: ExternalAsset
+    @State private var recipient = ""
+    @State private var amount = ""
+    @State private var prepared: PreparedTransfer?
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var sentHash: String?
+
+    private var to: String { recipient.trimmingCharacters(in: .whitespaces) }
+    private var recipientOK: Bool { ExternalSend.isValidAddress(to, for: asset) && to.lowercased() != asset.address.lowercased() }
+    private var amountOK: Bool {
+        let t = amount.trimmingCharacters(in: .whitespaces)
+        let parts = t.split(separator: ".", omittingEmptySubsequences: false)
+        return !t.isEmpty && parts.count <= 2 && parts.allSatisfy { $0.allSatisfy(\.isNumber) }
+            && (parts.count < 2 || parts[1].count <= asset.decimals) && t.contains(where: { $0 != "0" && $0 != "." })
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !ExternalSend.canSend(asset) {
+                    Section {
+                        Label("Sending \(asset.asset) from the phone is coming soon. For now, send it from Ego Desktop. You can already receive \(asset.asset) here.", systemImage: "clock")
+                            .foregroundStyle(Brand.muted)
+                    }
+                } else if let sentHash {
+                    Section {
+                        Label("Sent", systemImage: "checkmark.circle.fill").foregroundStyle(Brand.mint)
+                        Text(sentHash).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        if let url = ExternalSend.explorerTxURL(asset, hash: sentHash) {
+                            Link("View on explorer", destination: url)
+                        }
+                    } footer: {
+                        Text("Your balance updates once the network confirms it.")
+                    }
+                    Section { Button("Done") { dismiss() } }
+                } else if let p = prepared {
+                    Section("Check before sending") {
+                        LabeledContent("To", value: shortAddress(p.to))
+                        LabeledContent("Amount", value: "\(p.amountText) \(asset.asset)")
+                        LabeledContent("Network fee", value: "\(p.feeText) \(p.feeSymbol)")
+                        LabeledContent("Network", value: ExternalAsset.networkName(asset.chain))
+                    }
+                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
+                    Section {
+                        Button(busy ? "Sending…" : "Send \(asset.asset)") { Task { await send(p) } }
+                            .disabled(busy)
+                        Button("Change something") { prepared = nil; problem = nil }
+                            .disabled(busy)
+                    } footer: {
+                        Text("A payment can't be reversed once it's sent. Check the address is on \(ExternalAsset.networkName(asset.chain)).")
+                    }
+                } else {
+                    Section("Recipient") {
+                        TextField(asset.chain == "ETH" || asset.chain == "BNB" ? "0x…" : "Address", text: $recipient)
+                            .font(.system(.body, design: .monospaced))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        if !recipient.isEmpty && !recipientOK {
+                            Text(to.lowercased() == asset.address.lowercased() ? "That's your own address." : "That isn't a \(ExternalAsset.networkName(asset.chain)) address.")
+                                .font(.caption).foregroundStyle(Brand.danger)
+                        }
+                        Button("Paste") { recipient = UIPasteboard.general.string ?? recipient }
+                    }
+                    Section {
+                        TextField("0.00", text: $amount).keyboardType(.decimalPad)
+                        if let balance = model.externalBalances[asset.id] {
+                            if asset.contract != nil {
+                                Button("Use all (\(balance.formatted(maxDecimals: asset.decimals)) \(asset.asset))") {
+                                    amount = balance.formatted(maxDecimals: asset.decimals)
+                                }
+                            } else {
+                                Text("You have \(balance.formatted(maxDecimals: 8)) \(asset.asset)").font(.caption).foregroundStyle(Brand.muted)
+                            }
+                        }
+                    } header: {
+                        Text("Amount in \(asset.asset)")
+                    }
+                    if let problem { Section { Text(problem).foregroundStyle(Brand.danger) } }
+                    Section {
+                        Button(busy ? "Checking…" : "Review") { Task { await review() } }
+                            .disabled(!recipientOK || !amountOK || busy)
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .screenBackground()
+            .navigationTitle("Send \(asset.asset)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+    }
+
+    private func review() async {
+        busy = true
+        problem = nil
+        do {
+            prepared = try await model.prepareExternalSend(asset, to: to, amount: amount)
+        } catch {
+            problem = model.message(for: error)
+        }
+        busy = false
+    }
+
+    private func send(_ p: PreparedTransfer) async {
+        busy = true
+        problem = nil
+        do {
+            sentHash = try await ExternalSend.broadcast(p)
+            Task { await model.refreshExternal() }
+        } catch {
+            problem = model.message(for: error)
+        }
+        busy = false
     }
 }

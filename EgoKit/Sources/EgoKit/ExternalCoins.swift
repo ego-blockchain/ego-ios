@@ -259,3 +259,171 @@ public enum ExternalBalances {
         return data
     }
 }
+
+extension BigUnits {
+    /// Compares two non-negative decimal strings.
+    static func compare(_ a: String, _ b: String) -> ComparisonResult {
+        let x = String(a.drop { $0 == "0" }), y = String(b.drop { $0 == "0" })
+        if x.count != y.count { return x.count < y.count ? .orderedAscending : .orderedDescending }
+        return x == y ? .orderedSame : (x < y ? .orderedAscending : .orderedDescending)
+    }
+
+    /// Adds two non-negative decimal strings.
+    static func add(_ a: String, _ b: String) -> String {
+        let x = Array(a.reversed()), y = Array(b.reversed())
+        var out: [Character] = []
+        var carry = 0
+        for i in 0..<max(x.count, y.count) {
+            let d = (i < x.count ? Int(String(x[i]))! : 0) + (i < y.count ? Int(String(y[i]))! : 0) + carry
+            out.append(Character(String(d % 10)))
+            carry = d / 10
+        }
+        if carry > 0 { out.append(Character(String(carry))) }
+        let s = String(out.reversed().drop { $0 == "0" })
+        return s.isEmpty ? "0" : s
+    }
+}
+
+/// A transfer signed and ready to broadcast, so the review shows exactly
+/// what will be sent.
+public struct PreparedTransfer: Equatable, Sendable {
+    public let asset: ExternalAsset
+    public let to: String
+    public let raw: String
+    public let hash: String
+    /// In the asset's units.
+    public let amountUnits: String
+    /// In the chain's native coin's units (wei).
+    public let feeUnits: String
+    public let feeDecimals: Int
+    public let feeSymbol: String
+
+    public var amountText: String { BigUnits.format(amountUnits, decimals: asset.decimals, maxDecimals: asset.decimals) }
+    public var feeText: String { BigUnits.format(feeUnits, decimals: feeDecimals, maxDecimals: 8) }
+}
+
+public enum ExternalSendError: Error, Equatable, LocalizedError {
+    case notYet(String)
+    case badAddress(String)
+    case insufficient(String)
+    case signing(String)
+    case rejected(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .notYet(let asset): return "Sending \(asset) from the phone isn't ready yet. For now, send it from Ego Desktop."
+        case .badAddress(let network): return "That isn't a \(network) address."
+        case .insufficient(let what): return what
+        case .signing(let why): return why
+        case .rejected(let why): return "The network refused the transaction: \(why)"
+        }
+    }
+}
+
+public enum ExternalSend {
+    /// Chains the phone can send on so far.
+    public static func canSend(_ asset: ExternalAsset) -> Bool {
+        ["ETH", "BNB"].contains(asset.chain)
+    }
+
+    public static func isValidAddress(_ text: String, for asset: ExternalAsset) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        switch asset.chain {
+        case "ETH", "BNB":
+            return t.count == 42 && t.hasPrefix("0x") && t.dropFirst(2).allSatisfy(\.isHexDigit)
+        default:
+            return !t.isEmpty
+        }
+    }
+
+    public static func explorerTxURL(_ asset: ExternalAsset, hash: String) -> URL? {
+        let prefix = ["ETH": "https://etherscan.io/tx/", "BNB": "https://bscscan.com/tx/"][asset.chain]
+        return prefix.flatMap { URL(string: $0 + hash) }
+    }
+
+    /// Fetches the nonce and gas price, checks the balances and signs, without sending.
+    public static func prepare(
+        _ asset: ExternalAsset, seed: [UInt8], to: String, amount: String,
+        balance: ExternalBalance?, nativeBalance: ExternalBalance?
+    ) async throws -> PreparedTransfer {
+        guard canSend(asset) else { throw ExternalSendError.notYet(asset.asset) }
+        let recipient = to.trimmingCharacters(in: .whitespaces)
+        guard isValidAddress(recipient, for: asset) else { throw ExternalSendError.badAddress(ExternalAsset.networkName(asset.chain)) }
+        let nonceHex = try await ExternalBalances.evmHex(asset.chain, "eth_getTransactionCount", [asset.address, "pending"])
+        let gasPrice = try await ExternalBalances.evmHex(asset.chain, "eth_gasPrice", [])
+        var request: [String: Any] = [
+            "chain": asset.chain, "nonce": UInt64(nonceHex) ?? 0, "gas_price": gasPrice,
+            "to": recipient, "amount": amount.trimmingCharacters(in: .whitespaces), "decimals": asset.decimals,
+        ]
+        if let contract = asset.contract { request["contract"] = contract }
+        let signed = try sign(seed: seed, request: request)
+        let native = asset.contract == nil ? asset.asset : asset.chain
+        let prepared = PreparedTransfer(
+            asset: asset, to: recipient, raw: signed.raw, hash: signed.hash,
+            amountUnits: signed.amountUnits, feeUnits: signed.fee, feeDecimals: 18, feeSymbol: native
+        )
+        try checkFunds(prepared, balance: balance, nativeBalance: nativeBalance)
+        return prepared
+    }
+
+    static func checkFunds(_ p: PreparedTransfer, balance: ExternalBalance?, nativeBalance: ExternalBalance?) throws {
+        if p.asset.contract == nil {
+            if let balance, BigUnits.compare(BigUnits.add(p.amountUnits, p.feeUnits), balance.units) == .orderedDescending {
+                throw ExternalSendError.insufficient("That's more than your \(p.asset.asset) after the network fee of \(BigUnits.format(p.feeUnits, decimals: 18, maxDecimals: 8)) \(p.feeSymbol).")
+            }
+        } else {
+            if let balance, BigUnits.compare(p.amountUnits, balance.units) == .orderedDescending {
+                throw ExternalSendError.insufficient("You have \(balance.formatted()) \(p.asset.asset).")
+            }
+            if let nativeBalance, BigUnits.compare(p.feeUnits, nativeBalance.units) == .orderedDescending {
+                throw ExternalSendError.insufficient("Sending \(p.asset.asset) costs a network fee of about \(BigUnits.format(p.feeUnits, decimals: 18, maxDecimals: 8)) \(p.feeSymbol), and you have \(nativeBalance.formatted(maxDecimals: 8)) \(p.feeSymbol).")
+            }
+        }
+    }
+
+    public static func broadcast(_ p: PreparedTransfer) async throws -> String {
+        var lastError: Error = ExternalSendError.rejected("no node answered")
+        for node in ExternalBalances.evmNodes[p.asset.chain] ?? [] {
+            do {
+                let json = try await ExternalBalances.postJSON(node, ["jsonrpc": "2.0", "id": 1, "method": "eth_sendRawTransaction", "params": [p.raw]])
+                if let hash = json["result"] as? String { return hash }
+                if let message = (json["error"] as? [String: Any])?["message"] as? String {
+                    // Another node already has it: that's a success.
+                    if message.lowercased().contains("already known") { return p.hash }
+                    lastError = ExternalSendError.rejected(message)
+                    if message.lowercased().contains("insufficient funds") || message.lowercased().contains("nonce") { break }
+                }
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
+    }
+
+    struct Signed: Decodable {
+        let raw: String
+        let hash: String
+        let fee: String
+        let amountUnits: String
+        enum CodingKeys: String, CodingKey { case raw, hash, fee, amountUnits = "amount_units" }
+    }
+
+    static func sign(seed: [UInt8], request: [String: Any]) throws -> Signed {
+        #if canImport(EgoWalletCore)
+        let body = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+        let json: String = seed.withUnsafeBufferPointer { buffer in
+            body.withCString { cBody in
+                guard let raw = ego_wallet_sign_evm(buffer.baseAddress, buffer.count, cBody) else { return "" }
+                defer { ego_wallet_string_free(raw) }
+                return String(cString: raw)
+            }
+        }
+        let data = Data(json.utf8)
+        if let signed = try? JSONDecoder().decode(Signed.self, from: data) { return signed }
+        struct Failure: Decodable { let error: String }
+        throw ExternalSendError.signing((try? JSONDecoder().decode(Failure.self, from: data))?.error ?? "Couldn't sign.")
+        #else
+        throw ExternalWalletError.unavailable
+        #endif
+    }
+}

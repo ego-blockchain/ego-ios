@@ -23,8 +23,8 @@ let package = Package(
         // ego-blockchain-, and published there as a pre-release.
         .binaryTarget(
             name: "EgoWalletCore",
-            url: "https://github.com/ego-blockchain/ego-blockchain-/releases/download/wallet-core-0.1.0/EgoWalletCore.xcframework.zip",
-            checksum: "c120abc17dd82593ff344f4bb0749a40798a14042999749a800f02b5f65b2e2d"
+            url: "https://github.com/ego-blockchain/ego-blockchain-/releases/download/wallet-core-0.2.0/EgoWalletCore.xcframework.zip",
+            checksum: "6395b0b805d47445c02f0335160dc1285f3a03e390dd4eceb6d510e88782fb06"
         ),
         .testTarget(name: "EgoKitTests", dependencies: ["EgoKit"]),
     ]
