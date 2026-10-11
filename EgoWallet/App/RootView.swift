@@ -138,6 +138,7 @@ enum DemoFlow {
         case "receive": ReceiveView(address: "egot1yr99jpx3lq7s6m5kt0dz4n8c2w9vfh3g5qvqckfx")
         case "shield": ShieldSheet()
         case "presale": PresaleView()
+        case "presalecard": VStack { PresaleCard(); Spacer() }.padding(16).screenBackground()
         case "restore": NavigationStack { ImportWalletView() }
         case "done":
             FlowSheet(icon: "arrow.up.right", title: "On its way", step: 2) {

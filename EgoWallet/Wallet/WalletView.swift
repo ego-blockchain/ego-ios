@@ -15,9 +15,9 @@ struct WalletView: View {
                     if !model.queued.isEmpty {
                         QueuedPaymentsCard()
                     }
-                    EGUSDCard()
                     EarningsCard()
                     PresaleCard()
+                    EGUSDCard()
                     ShieldedCard()
                     OtherCoinsCard()
                     if let problem = model.problem {

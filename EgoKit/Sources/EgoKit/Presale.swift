@@ -22,6 +22,14 @@ public enum Presale {
         public let tierLabel: String
         public let tierIndex: Int
         public let tierCount: Int
+        /// Every round in order, with its price and how much EGOC it offers.
+        public var tiers: [Tier] = []
+
+        public struct Tier: Equatable, Sendable {
+            public let label: String
+            public let priceUsd: Double
+            public let cap: Double
+        }
     }
 
     public enum Failure: Error, Equatable, LocalizedError {
@@ -50,7 +58,13 @@ public enum Presale {
             discountPercent: (json["discount_pct"] as? NSNumber)?.intValue ?? 0,
             tierLabel: json["tier_label"] as? String ?? "",
             tierIndex: (json["tier_index"] as? NSNumber)?.intValue ?? 0,
-            tierCount: (json["tier_count"] as? NSNumber)?.intValue ?? 1
+            tierCount: (json["tier_count"] as? NSNumber)?.intValue ?? 1,
+            tiers: (json["tiers"] as? [[String: Any]] ?? []).compactMap { t -> Config.Tier? in
+                guard let label = t["label"] as? String,
+                      let price = (t["price"] as? NSNumber)?.doubleValue, price.isFinite, price > 0
+                else { return nil }
+                return Config.Tier(label: label, priceUsd: price, cap: (t["cap"] as? NSNumber)?.doubleValue ?? 0)
+            }
         )
     }
 

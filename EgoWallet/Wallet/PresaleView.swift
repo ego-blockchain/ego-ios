@@ -4,27 +4,237 @@ import SwiftUI
 /// The EGOC pre-sale on the Wallet screen, as in Ego Desktop.
 struct PresaleCard: View {
     @State private var open = false
+    @State private var config: Presale.Config?
+    @State private var glow = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        Button { open = true } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 16, weight: .bold))
-                    .frame(width: 38, height: 38)
-                    .background(Brand.lime.opacity(0.15))
-                    .foregroundStyle(Brand.lime)
-                    .clipShape(Circle())
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("EGOC pre-sale").font(.headline).foregroundStyle(Brand.text)
-                    Text("Buy at the pre-sale price, credited at the Genesis Block").font(.footnote).foregroundStyle(Brand.muted)
+        Button {
+            Haptics.tap()
+            open = true
+        } label: {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    Label(config.map { "\($0.tierLabel) round open" } ?? "Pre-sale open", systemImage: "sparkles")
+                        .font(.system(.caption, design: .rounded, weight: .heavy))
+                        .foregroundStyle(Brand.ink)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Brand.glow, in: Capsule())
+                    if let config, config.discountPercent > 0 {
+                        Text("\(config.discountPercent)% below launch price")
+                            .font(.system(.caption, design: .rounded, weight: .bold))
+                            .foregroundStyle(Brand.lime)
+                    }
+                    Spacer()
                 }
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Brand.muted.opacity(0.6))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Get EGOC before the Genesis Block")
+                        .font(.system(.title3, design: .rounded, weight: .heavy))
+                        .foregroundStyle(Brand.text)
+                    if let config {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(String(format: "$%.3f", config.priceUsd))
+                                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                                .foregroundStyle(Brand.glow)
+                            Text("per EGOC")
+                                .font(.subheadline)
+                                .foregroundStyle(Brand.muted)
+                            if config.launchUsd > config.priceUsd {
+                                Text(String(format: "$%.3f", config.launchUsd))
+                                    .font(.subheadline)
+                                    .strikethrough()
+                                    .foregroundStyle(Brand.muted.opacity(0.7))
+                            }
+                        }
+                    } else {
+                        Text("Quantum-safe from block one. Credited at mainnet launch.")
+                            .font(.subheadline)
+                            .foregroundStyle(Brand.muted)
+                    }
+                }
+                HStack {
+                    Text("Pay with crypto, card or Apple Pay")
+                        .font(.footnote)
+                        .foregroundStyle(Brand.muted)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Text("Buy EGOC")
+                        Image(systemName: "arrow.right")
+                    }
+                    .font(.system(.subheadline, design: .rounded, weight: .heavy))
+                    .foregroundStyle(Brand.ink)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Brand.glow, in: Capsule())
+                    .shadow(color: Brand.lime.opacity(0.4), radius: 10, y: 3)
+                }
             }
-            .card()
+            .padding(18)
+            .background {
+                ZStack {
+                    Brand.card
+                    Circle()
+                        .fill(Brand.lime.opacity(0.22))
+                        .frame(width: 220, height: 220)
+                        .blur(radius: 60)
+                        .offset(x: glow ? 120 : 60, y: -70)
+                    Circle()
+                        .fill(Brand.violet.opacity(0.2))
+                        .frame(width: 200, height: 200)
+                        .blur(radius: 60)
+                        .offset(x: glow ? -140 : -90, y: 80)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .stroke(AngularGradient(colors: [Brand.lime, Brand.mint, Brand.violet, Brand.lime], center: .center), lineWidth: 1.2)
+                    .opacity(0.7)
+            )
         }
         .buttonStyle(.plain)
+        .task {
+            if config == nil { config = try? await Presale.config() }
+        }
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 5).repeatForever(autoreverses: true)) { glow = true }
+        }
         .sheet(isPresented: $open) { PresaleView() }
+    }
+}
+
+/// Seed → Private → Launch, with the open round lit up.
+struct PriceLadder: View {
+    let config: Presale.Config
+    @State private var pulse = false
+
+    private struct Step: Identifiable {
+        let label: String
+        let price: Double
+        let detail: String
+        let state: Int // -1 done, 0 now, 1 later
+        var id: String { label }
+    }
+
+    private var steps: [Step] {
+        var steps = config.tiers.enumerated().map { i, t in
+            Step(label: t.label, price: t.priceUsd,
+                 detail: t.cap > 0 ? "\(Int(t.cap / 1_000_000))M EGOC" : "",
+                 state: i < config.tierIndex ? -1 : i == config.tierIndex ? 0 : 1)
+        }
+        if steps.isEmpty {
+            steps = [Step(label: config.tierLabel.isEmpty ? "Now" : config.tierLabel, price: config.priceUsd, detail: "", state: 0)]
+        }
+        if config.launchUsd > 0 {
+            steps.append(Step(label: "Launch", price: config.launchUsd, detail: "Planned", state: 1))
+        }
+        return steps
+    }
+
+    var body: some View {
+        GlassField(label: "Price by round", icon: "chart.bar.fill") {
+            HStack(alignment: .bottom, spacing: 10) {
+                let top = steps.map(\.price).max() ?? 1
+                ForEach(steps) { step in
+                    VStack(spacing: 6) {
+                        if step.state == 0 {
+                            Text("NOW")
+                                .font(.system(size: 10, weight: .heavy, design: .rounded))
+                                .foregroundStyle(Brand.ink)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Brand.glow, in: Capsule())
+                                .scaleEffect(pulse ? 1.08 : 1)
+                        }
+                        Text(String(format: "$%.3f", step.price))
+                            .font(.system(.subheadline, design: .rounded, weight: .heavy))
+                            .foregroundStyle(step.state == 0 ? Brand.lime : Brand.text)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(step.state == 0 ? AnyShapeStyle(Brand.glow) : AnyShapeStyle(Color.white.opacity(step.state < 0 ? 0.06 : 0.12)))
+                            .frame(height: max(18, 90 * step.price / top))
+                            .shadow(color: step.state == 0 ? Brand.lime.opacity(0.45) : .clear, radius: 10)
+                        Text(step.label)
+                            .font(.system(.caption, design: .rounded, weight: .bold))
+                            .foregroundStyle(step.state == 0 ? Brand.text : Brand.muted)
+                        if !step.detail.isEmpty {
+                            Text(step.detail).font(.caption2).foregroundStyle(Brand.muted)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.top, 4)
+            Text("Each round has a fixed price, set by the pre-sale. The next round starts when this one's allocation is gone.")
+                .font(.caption)
+                .foregroundStyle(Brand.muted)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
+        }
+    }
+}
+
+/// What makes Ego different, in three tiles.
+struct WhyEgo: View {
+    private let points: [(String, String, String)] = [
+        ("lock.shield.fill", "Quantum-safe from block one", "Dilithium and Kyber keys alongside Ed25519, at genesis, not a migration later."),
+        ("square.stack.3d.up.fill", "Three resources, one chain", "Storage, wireless coverage and compute, proven and settled natively."),
+        ("chevron.left.forwardslash.chevron.right", "Built in the open", "Written in Rust, with the full source history on GitHub."),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WHY EGO")
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .tracking(1.1)
+                .foregroundStyle(Brand.muted)
+            ForEach(Array(points.enumerated()), id: \.offset) { i, point in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: point.0)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Brand.lime)
+                        .frame(width: 38, height: 38)
+                        .background(Brand.lime.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(point.1).font(.system(.subheadline, design: .rounded, weight: .bold)).foregroundStyle(Brand.text)
+                        Text(point.2).font(.footnote).foregroundStyle(Brand.muted)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial.opacity(0.5), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.08)))
+                .reveal(0.08 + Double(i) * 0.06)
+            }
+        }
+    }
+}
+
+/// Pay → IOU → Genesis.
+struct PresaleSteps: View {
+    var body: some View {
+        GlassField(label: "How it works", icon: "list.number") {
+            ForEach(Array([
+                ("creditcard.fill", "Pay", "With BTC, ETH, BNB, SOL, ADA, TRX, USDT, a card or Apple Pay."),
+                ("doc.badge.lock", "Keep your IOU", "An encrypted proof of purchase, saved on this iPhone and in Files."),
+                ("cube.transparent.fill", "Receive at genesis", "Your EGOC is credited in the Genesis Block when mainnet launches."),
+            ].enumerated()), id: \.offset) { i, step in
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle().fill(Brand.glow).frame(width: 30, height: 30)
+                        Text("\(i + 1)").font(.system(.subheadline, design: .rounded, weight: .heavy)).foregroundStyle(Brand.ink)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(step.1, systemImage: step.0)
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(Brand.text)
+                        Text(step.2).font(.footnote).foregroundStyle(Brand.muted)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -75,12 +285,16 @@ struct PresaleView: View {
                 doneContent(made)
             } else {
                 priceCard.reveal(0.02)
+                WhyEgo()
                 GlassSegments(selection: $method, options: Method.allCases) { $0.rawValue }.reveal(0.06)
                 Group {
                     if method == .crypto { cryptoContent } else { cardContent }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                 passwordCard
+                PresaleSteps()
+                NoteCard(text: "Ego is on public testnet. Mainnet has no launch date yet and the security audit is still planned. EGOC has no market price, so only spend what you can afford to lose.",
+                         icon: "exclamationmark.shield.fill", tint: Brand.warning)
             }
             if let problem { ProblemBanner(text: problem) }
             if !ious.isEmpty { iouList }
@@ -104,12 +318,7 @@ struct PresaleView: View {
 
     @ViewBuilder private var priceCard: some View {
         if let config {
-            SummaryCard(
-                rows: (config.launchUsd > 0 ? [.init(label: "Launch price", value: String(format: "$%.4f", config.launchUsd))] : [])
-                    + (config.tierLabel.isEmpty ? [] : [.init(label: "Round", value: "\(config.tierLabel) (\(config.tierIndex + 1) of \(config.tierCount))")])
-                    + (config.discountPercent > 0 ? [.init(label: "Discount", value: "\(config.discountPercent)% off launch")] : []),
-                total: .init(label: "Pre-sale price", value: String(format: "$%.4f", config.priceUsd))
-            )
+            PriceLadder(config: config)
         } else if let configProblem {
             ProblemBanner(text: configProblem)
         } else {
