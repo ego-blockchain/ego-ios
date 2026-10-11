@@ -7,3 +7,4 @@ build/
 xcodegen/
 xcodegen.zip
 .DS_Store
+build-sim/
