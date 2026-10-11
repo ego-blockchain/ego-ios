@@ -644,7 +644,9 @@ struct FileDetailView: View {
                 dismiss()
             }
         } message: {
-            Text("Its key is removed from this wallet, so nobody can open it from your storage again. Anyone you already sent it to keeps their copy.")
+            Text(file.state == .stored
+                 ? "It's removed from this iPhone and from every Ego node that keeps a copy, and no node will store it again. Copies you already sent to people stay with them."
+                 : "It's removed from this iPhone. It never reached the network.")
         }
         .alert("Rename", isPresented: $renaming) {
             TextField("Name", text: $newName)

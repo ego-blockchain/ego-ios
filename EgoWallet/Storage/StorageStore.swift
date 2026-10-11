@@ -260,8 +260,8 @@ final class StorageStore: ObservableObject {
         try? FileManager.default.removeItem(at: openedDir.appendingPathComponent(file.cid))
     }
 
-    /// Removes the file from this wallet: its key, its name and its blocks on this iPhone,
-    /// and asks the network to drop it.
+    /// Removes the file from this wallet: its key, its name and its blocks on this iPhone.
+    /// A gateway passes the signed delete to every node that keeps a copy.
     func delete(_ file: LibraryFile) {
         if file.state == .stored, let app, let key = app.key {
             pendingDeletes.append(file.cid)
