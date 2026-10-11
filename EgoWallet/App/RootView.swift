@@ -133,11 +133,13 @@ enum DemoFlow {
         return args[i + 1]
     }
 
-    @ViewBuilder static var view: some View {
+    @MainActor @ViewBuilder static var view: some View {
         switch current {
         case "receive": ReceiveView(address: "egot1yr99jpx3lq7s6m5kt0dz4n8c2w9vfh3g5qvqckfx")
         case "shield": ShieldSheet()
         case "presale": PresaleView()
+        case "plans": NavigationStack { PlansPage(firstTime: true).navigationTitle("Storage") }.environmentObject(StorageStore())
+        case "library": NavigationStack { LibraryView().navigationTitle("Storage") }.environmentObject(StorageStore())
         case "presalecard": VStack { PresaleCard(); Spacer() }.padding(16).screenBackground()
         case "restore": NavigationStack { ImportWalletView() }
         case "done":

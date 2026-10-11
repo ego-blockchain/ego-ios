@@ -363,6 +363,21 @@ final class AppModel: ObservableObject {
         return try await pay(QueuedPayment(kind: .egoc, from: key.address, to: recipient, amount: amount, memo: memo))
     }
 
+    /// Pays for an Ego Storage plan from this wallet, the same payment Ego Desktop makes.
+    func payStoragePlan(_ plan: EgoStorage.Plan, billing: EgoStorage.Billing, amount: UInt64) async throws -> String {
+        guard let key else { throw WalletError.locked }
+        let address = key.address
+        let info = try await perform { try await $0.nonce(of: address) }
+        let tx = try Transactions.storagePlan(key: key, plan: plan, billing: billing, amount: amount, nonce: info.next, fee: info.feeUegoc)
+        return try await submit(tx)
+    }
+
+    /// As much history as a gateway gives, for finding an older plan payment.
+    func longHistory() async throws -> [HistoryItem] {
+        let address = self.address
+        return try await perform { try await $0.history(of: address, limit: AppModel.historyMax) }
+    }
+
     /// The EGOC price validators will check a mint against, in µUSD.
     func egocPriceMicroUsd() async throws -> UInt64 {
         EGUSD.priceMicroUsd(try await perform { try await $0.egocPriceUsd() })
