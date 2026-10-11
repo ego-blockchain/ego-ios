@@ -61,6 +61,7 @@ struct PlansPage: View {
                 Button("Open my storage") { finish() }.buttonStyle(GlowButtonStyle())
             } else {
                 header.reveal(0)
+                StorageTestingNote().reveal(0.02)
                 GlassSegments(selection: $billing, options: EgoStorage.Billing.allCases) { $0 == .annual ? "Yearly · 2 months free" : "Monthly" }
                     .reveal(0.04)
                 ForEach(Array(EgoStorage.plans.enumerated()), id: \.element.id) { i, p in
@@ -264,6 +265,14 @@ struct PlansPage: View {
     }
 }
 
+/// Storage runs on the test network: plans are paid with test coins, and they still work for real.
+struct StorageTestingNote: View {
+    var body: some View {
+        NoteCard(text: "Ego Storage is still in testing. Plans are paid with testnet EGUSD, and your plan works for real while it runs: upload, open, send and delete your files any time. Keep your own copy of anything important until the main network launches.",
+                 icon: "flask.fill", tint: Brand.warning)
+    }
+}
+
 func sizeLabel(_ gb: UInt64) -> String { gb >= 1024 ? "\(gb / 1024) TB" : "\(gb) GB" }
 
 // MARK: - Library
@@ -344,9 +353,17 @@ struct LibraryView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(store.currentPlan.name) plan")
-                        .font(.system(.headline, design: .rounded, weight: .heavy))
-                        .foregroundStyle(Brand.text)
+                    HStack(spacing: 6) {
+                        Text("\(store.currentPlan.name) plan")
+                            .font(.system(.headline, design: .rounded, weight: .heavy))
+                            .foregroundStyle(Brand.text)
+                        Text("TESTNET")
+                            .font(.system(size: 9, weight: .heavy, design: .rounded))
+                            .foregroundStyle(Brand.warning)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Brand.warning.opacity(0.15), in: Capsule())
+                    }
                     Text(planStatus).font(.caption).foregroundStyle(Brand.muted)
                 }
                 Spacer()
