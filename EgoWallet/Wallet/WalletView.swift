@@ -16,10 +16,10 @@ struct WalletView: View {
                         QueuedPaymentsCard()
                     }
                     EGUSDCard()
+                    EarningsCard()
+                    PresaleCard()
                     ShieldedCard()
                     OtherCoinsCard()
-                    PresaleCard()
-                    EarningsCard()
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
                     }
