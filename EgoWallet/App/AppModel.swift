@@ -52,6 +52,16 @@ final class AppModel: ObservableObject {
     @Published var seedMissing = false
     @Published var refreshing = false
     @Published private(set) var online = true
+    /// Payments confirmed while no node could be reached, for this wallet.
+    @Published private(set) var queued: [QueuedPayment] = []
+    /// When the balance and history were last fetched; shown when they're out of date.
+    @Published private(set) var lastUpdated: Date?
+
+    enum SendOutcome: Equatable {
+        case sent(String)
+        /// Saved to send as soon as a node answers.
+        case queued
+    }
 
     private(set) var key: EgoKey?
     let vault = SeedVault()
@@ -59,17 +69,30 @@ final class AppModel: ObservableObject {
     private let nearby: LocalGatewayBrowser
     private let pathMonitor = NWPathMonitor()
     private var pathSignature = ""
+    private var outbox: Outbox
+    private let snapshotURL: URL
+    private var flushing = false
+    private var flushLoop: Task<Void, Never>?
 
     init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let directory = GatewayDirectory(store: FileGatewayStore(url: support.appendingPathComponent("gateways.json")))
         self.directory = directory
+        outbox = Outbox(url: support.appendingPathComponent("outbox.json"))
+        snapshotURL = support.appendingPathComponent("wallet-snapshot.json")
         nearby = LocalGatewayBrowser { gateways in
             Task { await directory.setLocal(gateways) }
         }
         if let stored = vault.storedAddress {
             address = stored
             phase = .locked
+            if let snapshot = WalletSnapshot.load(from: snapshotURL, address: stored) {
+                balance = snapshot.balance
+                credits = snapshot.credits
+                history = snapshot.history
+                lastUpdated = Date(timeIntervalSince1970: TimeInterval(snapshot.updatedAt))
+            }
+            queued = outbox.items(from: stored)
         } else {
             phase = .onboarding
         }
@@ -146,6 +169,7 @@ final class AppModel: ObservableObject {
             phase = .ready
             problem = nil
             await refresh()
+            if queued.contains(where: \.waiting) { keepFlushing() }
         } catch VaultError.cancelled {
             problem = nil
         } catch VaultError.missing {
@@ -184,11 +208,149 @@ final class AppModel: ObservableObject {
             balance = try await perform { try await $0.balance(of: address).uegoc }
             let limit = historyLimit
             history = try await perform { try await $0.history(of: address, limit: limit) }
-            credits = try? await perform { try await $0.credits(of: address).credits }
+            credits = (try? await perform { try await $0.credits(of: address).credits }) ?? credits
             problem = nil
+            let now = Date()
+            lastUpdated = now
+            WalletSnapshot(address: address, balance: balance, credits: credits, history: history,
+                           updatedAt: Int64(now.timeIntervalSince1970)).save(to: snapshotURL)
         } catch {
             problem = message(for: error)
         }
+        if problem == nil { await flushOutbox() }
+    }
+
+    // MARK: - Payments that wait for the network
+
+    /// EGOC that queued payments haven't taken yet, so it isn't promised twice.
+    var spendableEGOC: UInt64? {
+        balance.map { b in
+            let held = outbox.committed(.egoc, from: address)
+            return b > held ? b - held : 0
+        }
+    }
+
+    var spendableCredits: UInt64? {
+        credits.map { c in
+            let held = outbox.committed(.egusd, from: address)
+            return c > held ? c - held : 0
+        }
+    }
+
+    /// No node answered at all, as opposed to one answering with a refusal.
+    static func isUnreachable(_ error: Error) -> Bool {
+        switch error {
+        case WalletError.offline, GatewayError.unreachable: return true
+        case GatewayError.http(let code): return code == 0 || code >= 500
+        case is URLError: return true
+        default: return false
+        }
+    }
+
+    /// Signs and sends a payment, or keeps it to send later if no node can be reached.
+    private func pay(_ item: QueuedPayment) async throws -> SendOutcome {
+        var item = item
+        do {
+            if item.signed == nil { item.signed = try await sign(item) }
+            return .sent(try await submit(item.signed!))
+        } catch where AppModel.isUnreachable(error) {
+            outbox.add(item)
+            queued = outbox.items(from: address)
+            keepFlushing()
+            return .queued
+        }
+    }
+
+    private func sign(_ item: QueuedPayment) async throws -> SignedTransaction {
+        guard let key, key.address == item.from else { throw WalletError.locked }
+        let address = key.address
+        let info = try await perform { try await $0.nonce(of: address) }
+        switch item.kind {
+        case .egoc:
+            return try Transactions.transfer(key: key, to: item.to, amount: item.amount, nonce: info.next, fee: info.feeUegoc, memo: item.memo)
+        case .egusd:
+            return try Transactions.creditsPay(key: key, to: item.to, credits: item.amount, nonce: info.next, fee: info.feeUegoc)
+        }
+    }
+
+    /// Whether the network already has this transaction, pending or confirmed.
+    private func alreadySent(_ tx: SignedTransaction) async throws -> Bool {
+        if history.contains(where: { $0.hash == tx.hash }) { return true }
+        let hash = tx.hash
+        return try await perform { try await $0.isConfirmed(hash: hash) }
+    }
+
+    /// Sends waiting payments in the order they were made. Stops at the first
+    /// one that can't reach a node, so a later payment never overtakes it.
+    func flushOutbox() async {
+        guard key != nil, !flushing, online else { return }
+        flushing = true
+        defer {
+            flushing = false
+            queued = outbox.items(from: address)
+        }
+        var sentAny = false
+        for id in outbox.items(from: address).filter(\.waiting).map(\.id) {
+            guard var item = outbox.items.first(where: { $0.id == id }) else { continue }
+            do {
+                if let signed = item.signed, try await alreadySent(signed) {
+                    outbox.remove(id)
+                    sentAny = true
+                    continue
+                }
+                if item.signed == nil {
+                    item.signed = try await sign(item)
+                    outbox.update(item)
+                }
+                _ = try await submit(item.signed!, refreshAfter: false)
+                outbox.remove(id)
+                sentAny = true
+            } catch where AppModel.isUnreachable(error) {
+                return
+            } catch {
+                item.rejected = message(for: error)
+                outbox.update(item)
+            }
+        }
+        if sentAny {
+            Task { await refresh() }
+        }
+    }
+
+    /// Retries every 30 seconds while payments are waiting.
+    private func keepFlushing() {
+        guard flushLoop == nil else { return }
+        flushLoop = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard let self else { return }
+                if !self.queued.contains(where: \.waiting) { break }
+                if self.phase == .ready { await self.flushOutbox() }
+            }
+            self?.flushLoop = nil
+        }
+    }
+
+    /// Sends a payment the network turned down again, signed afresh, unless
+    /// the first one turns out to have gone through after all.
+    func retryQueued(_ id: UUID) async {
+        guard var item = outbox.items.first(where: { $0.id == id }) else { return }
+        if let signed = item.signed, (try? await alreadySent(signed)) == true {
+            outbox.remove(id)
+            queued = outbox.items(from: address)
+            return
+        }
+        item.signed = nil
+        item.rejected = nil
+        outbox.update(item)
+        queued = outbox.items(from: address)
+        await flushOutbox()
+        keepFlushing()
+    }
+
+    func cancelQueued(_ id: UUID) {
+        outbox.remove(id)
+        queued = outbox.items(from: address)
     }
 
     func networkFee() async -> UInt64? {
@@ -196,12 +358,9 @@ final class AppModel: ObservableObject {
         return try? await perform { try await $0.nonce(of: address).feeUegoc }
     }
 
-    func send(to recipient: String, amount: UInt64, memo: String) async throws -> String {
+    func send(to recipient: String, amount: UInt64, memo: String) async throws -> SendOutcome {
         guard let key else { throw WalletError.locked }
-        let address = key.address
-        let info = try await perform { try await $0.nonce(of: address) }
-        let tx = try Transactions.transfer(key: key, to: recipient, amount: amount, nonce: info.next, fee: info.feeUegoc, memo: memo)
-        return try await submit(tx)
+        return try await pay(QueuedPayment(kind: .egoc, from: key.address, to: recipient, amount: amount, memo: memo))
     }
 
     /// The EGOC price validators will check a mint against, in µUSD.
@@ -218,17 +377,14 @@ final class AppModel: ObservableObject {
         return try await submit(tx)
     }
 
-    func payEGUSD(to recipient: String, credits: UInt64) async throws -> String {
+    func payEGUSD(to recipient: String, credits: UInt64) async throws -> SendOutcome {
         guard let key else { throw WalletError.locked }
-        let address = key.address
-        let info = try await perform { try await $0.nonce(of: address) }
-        let tx = try Transactions.creditsPay(key: key, to: recipient, credits: credits, nonce: info.next, fee: info.feeUegoc)
-        return try await submit(tx)
+        return try await pay(QueuedPayment(kind: .egusd, from: key.address, to: recipient, amount: credits))
     }
 
     /// Sends a signed transaction. If the gateway errors after accepting it,
     /// checks whether it landed anyway before reporting a failure.
-    private func submit(_ tx: SignedTransaction) async throws -> String {
+    private func submit(_ tx: SignedTransaction, refreshAfter: Bool = true) async throws -> String {
         var hash = tx.hash
         do {
             hash = try await perform { try await $0.submit(tx) }.txHash
@@ -237,7 +393,7 @@ final class AppModel: ObservableObject {
             let landed = try? await perform({ try await $0.isConfirmed(hash: submitted) })
             guard landed == true else { throw error }
         }
-        Task { await refresh() }
+        if refreshAfter { Task { await refresh() } }
         return hash
     }
 
@@ -385,6 +541,12 @@ final class AppModel: ObservableObject {
     }
 
     func deleteWallet() {
+        outbox.removeAll(from: address)
+        queued = []
+        flushLoop?.cancel()
+        flushLoop = nil
+        try? FileManager.default.removeItem(at: snapshotURL)
+        lastUpdated = nil
         vault.delete()
         key = nil
         address = ""

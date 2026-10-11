@@ -12,6 +12,9 @@ struct WalletView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     balanceCard
+                    if !model.queued.isEmpty {
+                        QueuedPaymentsCard()
+                    }
                     EGUSDCard()
                     ShieldedCard()
                     OtherCoinsCard()
@@ -52,6 +55,11 @@ struct WalletView: View {
             Text(shortAddress(model.address))
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(Brand.muted)
+            if model.problem != nil, let updated = model.lastUpdated {
+                Label("Last known balance, updated \(relativeTime(Int64(updated.timeIntervalSince1970)))", systemImage: "clock.arrow.circlepath")
+                    .font(.caption)
+                    .foregroundStyle(Brand.warning)
+            }
             HStack(spacing: 12) {
                 Button {
                     sending = true
@@ -68,6 +76,73 @@ struct WalletView: View {
             }
         }
         .card()
+    }
+}
+
+/// Payments made while no node could be reached, waiting to go out.
+struct QueuedPaymentsCard: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var cancelling: QueuedPayment?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                SectionLabel(text: "Waiting for the network")
+                Spacer()
+                if model.queued.contains(where: \.waiting) {
+                    ProgressView().controlSize(.small).tint(Brand.warning)
+                }
+            }
+            ForEach(model.queued) { item in
+                row(item)
+            }
+            Text("Sent automatically, in order, as soon as an Ego node answers. Keep the app open or come back to it; iOS doesn't let it send in the background.")
+                .font(.caption)
+                .foregroundStyle(Brand.muted)
+        }
+        .card()
+        .confirmationDialog("Cancel this payment?", isPresented: Binding(get: { cancelling != nil }, set: { if !$0 { cancelling = nil } }), titleVisibility: .visible, presenting: cancelling) { item in
+            Button("Cancel payment", role: .destructive) {
+                model.cancelQueued(item.id)
+                cancelling = nil
+            }
+            Button("Keep it", role: .cancel) { cancelling = nil }
+        } message: { item in
+            Text(item.signed == nil
+                 ? "It hasn't left this iPhone yet."
+                 : "If the connection dropped just after it was sent, it may still go through.")
+        }
+    }
+
+    private func row(_ item: QueuedPayment) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: item.waiting ? "clock.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(item.waiting ? Brand.warning : Brand.danger)
+                .frame(width: 34, height: 34)
+                .background((item.waiting ? Brand.warning : Brand.danger).opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.kind == .egoc ? "\(Amount.format(item.amount)) EGOC" : EGUSD.format(item.amount))
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundStyle(Brand.text)
+                Text("To \(shortAddress(item.to)) · \(relativeTime(item.createdAt))")
+                    .font(.caption)
+                    .foregroundStyle(Brand.muted)
+                if let why = item.rejected {
+                    Text("Not sent: \(why)").font(.caption).foregroundStyle(Brand.danger)
+                }
+            }
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 6) {
+                if !item.waiting {
+                    Button("Try again") { Task { await model.retryQueued(item.id) } }
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Brand.lime)
+                }
+                Button("Cancel") { cancelling = item }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Brand.muted)
+            }
+        }
     }
 }
 

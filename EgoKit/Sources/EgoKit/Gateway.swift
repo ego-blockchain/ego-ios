@@ -63,7 +63,7 @@ public struct SubmitResult: Decodable, Equatable {
     enum CodingKeys: String, CodingKey { case txHash = "tx_hash" }
 }
 
-public struct HistoryItem: Decodable, Equatable, Identifiable {
+public struct HistoryItem: Codable, Equatable, Identifiable {
     public let hash: String
     public let from: String
     public let to: String

@@ -16,18 +16,21 @@ struct SendView: View {
     @State private var busy = false
     @State private var problem: String?
     @State private var sentHash: String?
+    @State private var waiting = false
 
     private var amount: UInt64? { Amount.parse(amountText) }
     private var to: String { recipient.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var recipientOK: Bool { EgoAddress.isValid(to) }
     private var memoOK: Bool { memo.utf8.count <= Transactions.maxMemoBytes }
-    private var step: Int { sentHash != nil ? 2 : reviewing ? 1 : 0 }
-    private var maxSendable: UInt64? { model.balance.map { $0 > (fee ?? 0) ? $0 - (fee ?? 0) : 0 } }
+    private var step: Int { sentHash != nil || waiting ? 2 : reviewing ? 1 : 0 }
+    private var maxSendable: UInt64? { model.spendableEGOC.map { $0 > (fee ?? 0) ? $0 - (fee ?? 0) : 0 } }
 
     var body: some View {
-        FlowSheet(icon: "arrow.up.right", title: sentHash != nil ? "On its way" : "Send EGOC",
-                  subtitle: sentHash == nil ? "To any Ego address" : nil, step: step) {
-            if let sentHash {
+        FlowSheet(icon: waiting ? "clock" : "arrow.up.right", title: sentHash != nil ? "On its way" : waiting ? "Waiting to send" : "Send EGOC",
+                  subtitle: sentHash == nil && !waiting ? "To any Ego address" : nil, step: step) {
+            if waiting {
+                SuccessBurst(title: "Saved", subtitle: "No Ego node can be reached right now. Your payment is kept on this iPhone and sent automatically as soon as one answers.", icon: "clock.fill")
+            } else if let sentHash {
                 SuccessBurst(title: "Sent", subtitle: "It shows as pending until the network confirms it, usually within seconds.")
                 HashCard(hash: sentHash)
             } else if reviewing, let amount {
@@ -45,7 +48,7 @@ struct SendView: View {
                              problem: recipientOK ? nil : "That isn't an Ego address.")
                 AmountInput(
                     label: "Amount", unit: "EGOC", text: $amountText,
-                    caption: model.balance.map { "You have \(Amount.format($0)) EGOC" },
+                    caption: model.spendableEGOC.map { "You have \(Amount.format($0)) EGOC" },
                     problem: !amountText.isEmpty && (amount ?? 0) == 0 ? "Enter an amount with up to 6 decimals." : nil,
                     quickPicks: maxSendable.map { m in [("25%", Amount.format(m / 4)), ("50%", Amount.format(m / 2)), ("Max", Amount.format(m))] } ?? []
                 )
@@ -56,7 +59,7 @@ struct SendView: View {
             }
             if let problem { ProblemBanner(text: problem) }
         } footer: {
-            if sentHash != nil {
+            if sentHash != nil || waiting {
                 Button("Done") { dismiss() }.buttonStyle(GlowButtonStyle())
             } else if reviewing, let amount {
                 HoldToConfirm(title: "Hold to send \(Amount.format(amount)) EGOC", busy: busy) { Task { await send(amount) } }
@@ -74,8 +77,10 @@ struct SendView: View {
         busy = true
         problem = nil
         do {
-            let hash = try await model.send(to: to, amount: amount, memo: memo)
-            withAnimation(.spring) { sentHash = hash }
+            switch try await model.send(to: to, amount: amount, memo: memo) {
+            case .sent(let hash): withAnimation(.spring) { sentHash = hash }
+            case .queued: withAnimation(.spring) { waiting = true }
+            }
         } catch {
             Haptics.warning()
             problem = model.message(for: error)
@@ -254,18 +259,21 @@ struct PayEGUSDView: View {
     @State private var busy = false
     @State private var problem: String?
     @State private var sentHash: String?
+    @State private var waiting = false
     @State private var converting = false
 
     private var credits: UInt64? { EGUSD.parse(amountText) }
     private var to: String { recipient.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var recipientOK: Bool { EgoAddress.isValid(to) && to != model.address }
-    private var enough: Bool { (credits ?? 0) <= (model.credits ?? 0) }
-    private var step: Int { sentHash != nil ? 2 : reviewing ? 1 : 0 }
+    private var enough: Bool { (credits ?? 0) <= (model.spendableCredits ?? 0) }
+    private var step: Int { sentHash != nil || waiting ? 2 : reviewing ? 1 : 0 }
 
     var body: some View {
-        FlowSheet(icon: "dollarsign.circle", title: sentHash != nil ? "Paid" : "Pay EGUSD",
-                  subtitle: sentHash == nil ? model.credits.map { "You have \(EGUSD.format($0))" } : nil, step: step, tint: Brand.mint) {
-            if let sentHash {
+        FlowSheet(icon: waiting ? "clock" : "dollarsign.circle", title: sentHash != nil ? "Paid" : waiting ? "Waiting to send" : "Pay EGUSD",
+                  subtitle: sentHash == nil && !waiting ? model.spendableCredits.map { "You have \(EGUSD.format($0))" } : nil, step: step, tint: Brand.mint) {
+            if waiting {
+                SuccessBurst(title: "Saved", subtitle: "No Ego node can be reached right now. Your payment is kept on this iPhone and sent automatically as soon as one answers.", icon: "clock.fill")
+            } else if let sentHash {
                 SuccessBurst(title: "Paid", subtitle: "It shows as pending until the network confirms it.")
                 HashCard(hash: sentHash)
             } else if reviewing, let credits {
@@ -286,13 +294,13 @@ struct PayEGUSDView: View {
                 AmountInput(
                     label: "Amount", unit: "EGUSD", text: $amountText,
                     problem: !amountText.isEmpty && credits == nil ? "Enter dollars and cents, like 12.50."
-                        : !enough ? "You have \(EGUSD.format(model.credits ?? 0))." : nil,
+                        : !enough ? "You have \(EGUSD.format(model.spendableCredits ?? 0))." : nil,
                     quickPicks: (model.credits ?? 0) > 0 ? [("All", EGUSD.format(model.credits ?? 0).replacingOccurrences(of: "$", with: ""))] : []
                 )
             }
             if let problem { ProblemBanner(text: problem) }
         } footer: {
-            if sentHash != nil {
+            if sentHash != nil || waiting {
                 Button("Done") { dismiss() }.buttonStyle(GlowButtonStyle())
             } else if reviewing, let credits {
                 HoldToConfirm(title: "Hold to pay \(EGUSD.format(credits))", busyTitle: "Paying…", busy: busy) { Task { await pay(credits) } }
@@ -311,8 +319,10 @@ struct PayEGUSDView: View {
         busy = true
         problem = nil
         do {
-            let hash = try await model.payEGUSD(to: to, credits: credits)
-            withAnimation(.spring) { sentHash = hash }
+            switch try await model.payEGUSD(to: to, credits: credits) {
+            case .sent(let hash): withAnimation(.spring) { sentHash = hash }
+            case .queued: withAnimation(.spring) { waiting = true }
+            }
         } catch {
             Haptics.warning()
             problem = model.message(for: error)

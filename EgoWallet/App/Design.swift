@@ -467,6 +467,7 @@ struct GhostButtonStyle: ButtonStyle {
 struct SuccessBurst: View {
     let title: String
     var subtitle: String?
+    var icon = "checkmark"
     @State private var drawn: CGFloat = 0
     @State private var popped = false
     @State private var burst = false
@@ -488,7 +489,7 @@ struct SuccessBurst: View {
                     .stroke(Brand.glow, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
                     .frame(width: 96, height: 96)
-                Image(systemName: "checkmark")
+                Image(systemName: icon)
                     .font(.system(size: 40, weight: .heavy))
                     .foregroundStyle(Brand.lime)
                     .scaleEffect(popped ? 1 : 0.2)
