@@ -96,6 +96,25 @@ final class StorageTests: XCTestCase {
         XCTAssertThrowsError(try EgoShareLink(parsing: "egoshare2:x"))
     }
 
+    func testStorageRequestsSignWhatTheGatewayChecks() throws {
+        // Must match phone_storage.rs request_bytes: "domain\nowner\ncid\nts".
+        XCTAssertEqual(String(decoding: StorageRequest.signingBytes(domain: StorageRequest.blockDomain, owner: "egot1me", cid: "egoblk1aa", ts: 42), as: UTF8.self),
+                       "ego/storage-block/v1\negot1me\negoblk1aa\n42")
+        let key = try EgoKey(seed: [UInt8](repeating: 2, count: 32))
+        let bytes = StorageRequest.signingBytes(domain: StorageRequest.deleteDomain, owner: key.address, cid: "egomfd1bb", ts: 7)
+        XCTAssertTrue(EgoKey.verify(signature: try key.sign(bytes), message: bytes, publicKey: key.publicKey))
+    }
+
+    func testManifestBytesAreStableSoTheGatewayGetsTheSameID() throws {
+        let file = try FileCrypto.encrypt(Data(repeating: 1, count: 1000))
+        let reopened = try JSONDecoder().decode(StorageManifest.self, from: file.manifest.data)
+        XCTAssertEqual(reopened.data, file.manifest.data)
+        XCTAssertEqual(reopened.cid, file.cid)
+        let text = String(decoding: file.manifest.data, as: UTF8.self)
+        XCTAssertTrue(text.hasPrefix(#"{"blocks":[{"block_cid":"egoblk1"#))
+        XCTAssertTrue(text.hasSuffix(#""file_name":"","total_size":1000}"#))
+    }
+
     func testLibraryIsSealedWithTheWalletSeed() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("library-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: url) }

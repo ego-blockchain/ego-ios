@@ -393,7 +393,7 @@ struct LibraryView: View {
     @ViewBuilder private var waitingNote: some View {
         let waiting = store.files.filter { $0.state == .waiting }.count
         if waiting > 0 {
-            NoteCard(text: "\(waiting) file\(waiting == 1 ? " is" : "s are") encrypted and kept on this iPhone, waiting to go to the Ego network. They open, send and delete normally in the meantime.",
+            NoteCard(text: store.uploadNote ?? "\(waiting) file\(waiting == 1 ? " is" : "s are") encrypted on this iPhone and going to the Ego network as soon as a gateway takes \(waiting == 1 ? "it" : "them"). They open, send and delete normally meanwhile.",
                      icon: "icloud.and.arrow.up", tint: Brand.mint)
         }
     }

@@ -176,8 +176,10 @@ public final class GatewayClient {
         return nextId
     }
 
-    public func call<P: Encodable, R: Decodable>(_ method: String, _ params: P, as: R.Type = R.self) async throws -> R {
-        var request = URLRequest(url: gateway.endpoint)
+    /// Calls `method`; `path` picks another endpoint on the same gateway, such as "storage" for whole blocks.
+    public func call<P: Encodable, R: Decodable>(_ method: String, _ params: P, as: R.Type = R.self, at path: String? = nil) async throws -> R {
+        let url = path.map { gateway.endpoint.deletingLastPathComponent().appendingPathComponent($0) } ?? gateway.endpoint
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(RPCRequest(id: requestId(), method: method, params: params))

@@ -356,3 +356,65 @@ public struct FileLibrary {
         #endif
     }
 }
+
+// MARK: - Gateway calls
+
+/// Signed storage requests: each names its owner, the file or block it's about, and the time.
+public enum StorageRequest {
+    public static let blockDomain = "ego/storage-block/v1"
+    public static let manifestDomain = "ego/storage-manifest/v1"
+    public static let deleteDomain = "ego/storage-delete/v1"
+
+    public static func signingBytes(domain: String, owner: String, cid: String, ts: Int64) -> [UInt8] {
+        Array("\(domain)\n\(owner)\n\(cid)\n\(ts)".utf8)
+    }
+}
+
+extension GatewayClient {
+    private struct Signed: Encodable {
+        let owner: String
+        let pubkey: String
+        let sig: String
+        let ts: Int64
+        let cid: String
+        var data: String?
+        var manifest: String?
+    }
+
+    private func signed(_ domain: String, cid: String, key: EgoKey, now: Int64) throws -> Signed {
+        let sig = try key.sign(StorageRequest.signingBytes(domain: domain, owner: key.address, cid: cid, ts: now))
+        return Signed(owner: key.address, pubkey: Hex.encode(key.publicKey), sig: Hex.encode(sig), ts: now, cid: cid)
+    }
+
+    /// Hands one encrypted block to the gateway. Sending a block it already has is harmless.
+    public func putBlock(cid: String, sealed: Data, key: EgoKey, now: Int64 = Int64(Date().timeIntervalSince1970)) async throws {
+        struct Stored: Decodable { let stored: Bool }
+        var params = try signed(StorageRequest.blockDomain, cid: cid, key: key, now: now)
+        params.data = sealed.base64EncodedString()
+        let _: Stored = try await call("storage.putBlock", params, at: "storage")
+    }
+
+    /// Asks the gateway to keep the file whose blocks it now has. Returns the blocks it's still missing.
+    public func putManifest(_ manifest: StorageManifest, key: EgoKey, now: Int64 = Int64(Date().timeIntervalSince1970)) async throws -> [String] {
+        struct Answer: Decodable { let stored: Bool; let missing: [String]? }
+        var params = try signed(StorageRequest.manifestDomain, cid: manifest.cid, key: key, now: now)
+        params.manifest = manifest.data.base64EncodedString()
+        let answer: Answer = try await call("storage.putManifest", params, at: "storage")
+        return answer.stored ? [] : (answer.missing ?? [])
+    }
+
+    /// A block by its ID, or nil while the gateway is still fetching it from the network.
+    public func getBlock(cid: String) async throws -> Data? {
+        struct Answer: Decodable { let data: String?; let pending: Bool? }
+        let answer: Answer = try await call("storage.getBlock", ["cid": cid], at: "storage")
+        guard let data = answer.data else { return nil }
+        guard let decoded = Data(base64Encoded: data) else { throw GatewayError.badResponse }
+        return decoded
+    }
+
+    /// Tells the gateway its owner no longer wants the file.
+    public func deleteFile(cid: String, key: EgoKey, now: Int64 = Int64(Date().timeIntervalSince1970)) async throws {
+        struct Answer: Decodable { let removed: Bool }
+        let _: Answer = try await call("storage.delete", try signed(StorageRequest.deleteDomain, cid: cid, key: key, now: now))
+    }
+}
