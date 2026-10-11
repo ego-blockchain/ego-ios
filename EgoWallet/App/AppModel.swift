@@ -363,12 +363,12 @@ final class AppModel: ObservableObject {
         return try await pay(QueuedPayment(kind: .egoc, from: key.address, to: recipient, amount: amount, memo: memo))
     }
 
-    /// Pays for an Ego Storage plan from this wallet, the same payment Ego Desktop makes.
-    func payStoragePlan(_ plan: EgoStorage.Plan, billing: EgoStorage.Billing, amount: UInt64) async throws -> String {
+    /// Pays for an Ego Storage plan in EGUSD, the same payment Ego Desktop makes.
+    func payStoragePlan(_ plan: EgoStorage.Plan, billing: EgoStorage.Billing) async throws -> String {
         guard let key else { throw WalletError.locked }
         let address = key.address
         let info = try await perform { try await $0.nonce(of: address) }
-        let tx = try Transactions.storagePlan(key: key, plan: plan, billing: billing, amount: amount, nonce: info.next, fee: info.feeUegoc)
+        let tx = try Transactions.storagePlan(key: key, plan: plan, billing: billing, nonce: info.next, fee: info.feeUegoc)
         return try await submit(tx)
     }
 

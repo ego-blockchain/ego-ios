@@ -46,10 +46,11 @@ struct PlansPage: View {
     @State private var busy = false
     @State private var problem: String?
     @State private var paidHash: String?
+    @State private var converting = false
 
     private var plan: EgoStorage.Plan { EgoStorage.plans.first { $0.id == selected } ?? EgoStorage.plans[0] }
-    private var cost: UInt64? { store.price(plan, billing) }
-    private var affordable: Bool { cost.map { $0 <= (app.spendableEGOC ?? 0) } ?? false }
+    private var cost: UInt64 { plan.credits(billing) }
+    private var affordable: Bool { cost <= (app.spendableCredits ?? 0) }
     private var isCurrent: Bool { !plan.isFree && store.currentPlan.id == plan.id && store.subscription?.billing == billing }
 
     var body: some View {
@@ -188,19 +189,31 @@ struct PlansPage: View {
             NoteCard(text: "You're on this plan. It runs until \(expiry).", icon: "checkmark.circle.fill", tint: Brand.mint)
         } else if !store.networkHasRoom(for: plan) {
             NoteCard(text: "The network doesn't have \(sizeLabel(plan.gb)) free yet, so this plan can't be bought. It opens as more Ego Desktop computers share space.", icon: "hourglass", tint: Brand.warning)
-        } else if let cost {
+        } else {
             VStack(spacing: 8) {
-                HoldToConfirm(title: "Hold to pay \(Amount.format(cost, maxDecimals: 2)) EGOC", busyTitle: "Paying…", busy: busy, enabled: affordable) {
+                HoldToConfirm(title: "Hold to pay \(EGUSD.format(cost)) EGUSD", busyTitle: "Paying…", busy: busy, enabled: affordable) {
                     Task { await pay() }
                 }
-                Text(affordable
-                     ? String(format: "$%.2f for %@, paid in EGOC from this wallet.", plan.priceUsd(billing), billing == .annual ? "a year" : "a month")
-                     : "Your wallet doesn't have \(Amount.format(cost, maxDecimals: 2)) EGOC.")
-                    .font(.caption)
-                    .foregroundStyle(affordable ? Brand.muted : Brand.warning)
+                if affordable {
+                    Text("\(EGUSD.format(cost)) for \(billing == .annual ? "a year" : "a month"), paid in EGUSD, so the price never moves with EGOC.")
+                        .font(.caption)
+                        .foregroundStyle(Brand.muted)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("Plans are paid in EGUSD. You have \(EGUSD.format(app.spendableCredits ?? 0)).")
+                        .font(.caption)
+                        .foregroundStyle(Brand.warning)
+                    Button {
+                        converting = true
+                    } label: {
+                        Label("Convert EGOC to EGUSD", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(OutlineButtonStyle())
+                }
             }
-        } else {
-            NoteCard(text: "Getting the EGOC price…", icon: "clock")
+            .sheet(isPresented: $converting) {
+                ConvertToEGUSDView()
+            }
         }
         if !firstTime {
             Button("Close") { dismiss() }.buttonStyle(GhostButtonStyle())

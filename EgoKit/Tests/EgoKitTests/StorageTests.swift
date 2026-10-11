@@ -4,35 +4,63 @@ import XCTest
 final class StorageTests: XCTestCase {
     private let me = "egot1me"
 
-    private func payment(_ memo: String, at ts: Int64, confirmed: Bool = true, from: String = "egot1me", type: String? = "transfer") -> HistoryItem {
+    private func item(to: String, amount: UInt64, memo: String, at ts: Int64, type: String, confirmed: Bool = true, from: String = "egot1me") -> HistoryItem {
         let json = """
-        {"hash":"0x\(ts)","from":"\(from)","to":"\(EgoStorage.poolAddress)","amount":1000000,"timestamp":\(ts),
-         "memo":"\(memo)","tx_type":\(type.map { "\"\($0)\"" } ?? "null"),"block_height":\(confirmed ? "10" : "null")}
+        {"hash":"0x\(ts)","from":"\(from)","to":"\(to)","amount":\(amount),"timestamp":\(ts),
+         "memo":"\(memo)","tx_type":"\(type)","block_height":\(confirmed ? "10" : "null")}
         """
         return try! JSONDecoder().decode(HistoryItem.self, from: Data(json.utf8))
     }
 
-    func testMemoMatchesEgoDesktop() {
-        let pro = EgoStorage.plans.first { $0.id == "pro" }!
-        XCTAssertEqual(EgoStorage.memo(for: pro, billing: .monthly), "Ego Storage Pro – monthly ($1.99)")
-        XCTAssertEqual(EgoStorage.memo(for: pro, billing: .annual), "Ego Storage Pro – annual ($19.90)")
+    private func egusd(_ memo: String, at ts: Int64, confirmed: Bool = true, from: String = "egot1me") -> HistoryItem {
+        item(to: EgoStorage.feeSink, amount: 0, memo: memo, at: ts, type: "credits_pay", confirmed: confirmed, from: from)
     }
 
-    func testLatestPlanPaymentSetsTheQuota() {
+    /// $0.01 per EGOC.
+    private let cent: UInt64 = 10_000
+
+    func testPlanMemosMatchEgoDesktop() {
+        let pro = EgoStorage.plans.first { $0.id == "pro" }!
+        XCTAssertEqual(EgoStorage.planMemo(for: pro, billing: .monthly), "credits_pay:199:plan:Pro:monthly")
+        XCTAssertEqual(EgoStorage.planMemo(for: pro, billing: .annual), "credits_pay:1990:plan:Pro:annual")
+        XCTAssertEqual(EgoStorage.memo(for: pro, billing: .monthly), "Ego Storage Pro – monthly ($1.99)")
+    }
+
+    func testNewestValidPlanSetsTheQuota() {
         let history = [
-            payment("Ego Storage Basic – monthly ($0.79)", at: 1_000),
-            payment("Ego Storage Max – annual ($49.90)", at: 2_000),
-            payment("photo.jpg | 3 blocks | 12 months", at: 3_000, type: "store_data"),
-            payment("Ego Storage Pro – monthly ($1.99)", at: 4_000, from: "egot1someoneelse"),
+            egusd("credits_pay:79:plan:Basic:monthly", at: 1_000),
+            egusd("credits_pay:4990:plan:Max:annual", at: 2_000),
+            egusd("credits_pay:199:plan:Pro:monthly", at: 3_000, from: "egot1someoneelse"),
+            item(to: EgoStorage.poolAddress, amount: 5_000_000, memo: "photo.jpg | 3 blocks", at: 4_000, type: "store_data"),
         ]
-        let sub = EgoStorage.subscription(in: history, of: me)!
+        let sub = EgoStorage.subscription(in: history, of: me, egocPriceMicroUsd: cent)!
         XCTAssertEqual(sub.plan.id, "max")
         XCTAssertEqual(sub.billing, .annual)
         XCTAssertEqual(EgoStorage.quotaBytes(sub, now: 2_100), 1024 * 1_000_000_000)
     }
 
+    func testUnderpaidOrMislabelledPlansDontCount() {
+        // Paying 1 cent for Max, or a note that merely mentions a plan, unlocks nothing.
+        let history = [
+            egusd("credits_pay:1:plan:Max:monthly", at: 1),
+            egusd("credits_pay:999:plan:Gold:monthly", at: 2),
+            item(to: EgoStorage.poolAddress, amount: 1, memo: "Ego Storage Max – monthly ($4.99)", at: 3, type: "transfer"),
+            item(to: EgoStorage.poolAddress, amount: 999_000_000, memo: "please give me Max", at: 4, type: "transfer"),
+        ]
+        XCTAssertNil(EgoStorage.subscription(in: history, of: me, egocPriceMicroUsd: cent))
+    }
+
+    func testEgocPlansCountWhenTheyPaidAtLeastHalf() {
+        // Pro is $1.99. At $0.01 per EGOC, 100 EGOC is $1.00, over half; 99 EGOC is under.
+        let enough = item(to: EgoStorage.poolAddress, amount: 100_000_000, memo: "Ego Storage Pro – monthly ($1.99)", at: 5, type: "transfer")
+        let short = item(to: EgoStorage.poolAddress, amount: 99_000_000, memo: "Ego Storage Pro – monthly ($1.99)", at: 5, type: "transfer")
+        XCTAssertEqual(EgoStorage.subscription(in: [enough], of: me, egocPriceMicroUsd: cent)?.plan.id, "pro")
+        XCTAssertNil(EgoStorage.subscription(in: [short], of: me, egocPriceMicroUsd: cent))
+        XCTAssertNil(EgoStorage.subscription(in: [enough], of: me, egocPriceMicroUsd: nil))
+    }
+
     func testLapsedPlanKeepsSpaceThroughGraceThenFallsToFree() {
-        let sub = EgoStorage.subscription(in: [payment("Ego Storage Pro – monthly ($1.99)", at: 0)], of: me)!
+        let sub = EgoStorage.subscription(in: [egusd("credits_pay:199:plan:Pro:monthly", at: 0)], of: me, egocPriceMicroUsd: nil)!
         let month = EgoStorage.Billing.monthly.seconds
         XCTAssertTrue(sub.active(now: month - 1))
         XCTAssertTrue(sub.inGrace(now: month + 10))
@@ -41,27 +69,21 @@ final class StorageTests: XCTestCase {
     }
 
     func testUnconfirmedPaymentDoesNotRaiseTheQuotaYet() {
-        let sub = EgoStorage.subscription(in: [payment("Ego Storage Pro – monthly ($1.99)", at: 0, confirmed: false)], of: me)!
+        let sub = EgoStorage.subscription(in: [egusd("credits_pay:199:plan:Pro:monthly", at: 0, confirmed: false)], of: me, egocPriceMicroUsd: nil)!
         XCTAssertFalse(sub.confirmed)
         XCTAssertEqual(EgoStorage.quotaBytes(sub, now: 10), EgoStorage.freeBytes)
         XCTAssertEqual(EgoStorage.quotaBytes(nil, now: 10), EgoStorage.freeBytes)
     }
 
-    func testPriceInEgocHasAOneEgocFloor() {
-        // $1.99 at $0.01 per EGOC is 199 EGOC.
-        XCTAssertEqual(EgoStorage.priceUegoc(usd: 1.99, priceMicroUsd: 10_000), 199_000_000)
-        XCTAssertEqual(EgoStorage.priceUegoc(usd: 0.79, priceMicroUsd: 5_000_000), 1_000_000)
-        XCTAssertNil(EgoStorage.priceUegoc(usd: 1, priceMicroUsd: 0))
-    }
-
-    func testPlanPaymentIsSignedToThePool() throws {
+    func testPlanPaymentIsEgusdToTheFeeSink() throws {
         let key = try EgoKey(seed: [UInt8](repeating: 3, count: 32))
         let basic = EgoStorage.plans[1]
-        let tx = try Transactions.storagePlan(key: key, plan: basic, billing: .monthly, amount: 79_000_000, nonce: 4, fee: 1_000)
-        XCTAssertEqual(tx.to, EgoStorage.poolAddress)
-        XCTAssertEqual(tx.memo, "Ego Storage Basic – monthly ($0.79)")
-        XCTAssertEqual(tx.txType, "transfer")
-        XCTAssertThrowsError(try Transactions.storagePlan(key: key, plan: EgoStorage.plans[0], billing: .monthly, amount: 1, nonce: 4, fee: 1))
+        let tx = try Transactions.storagePlan(key: key, plan: basic, billing: .monthly, nonce: 4, fee: 1_000)
+        XCTAssertEqual(tx.to, EgoStorage.feeSink)
+        XCTAssertEqual(tx.amount, 0)
+        XCTAssertEqual(tx.memo, "credits_pay:79:plan:Basic:monthly")
+        XCTAssertEqual(tx.txType, "credits_pay")
+        XCTAssertThrowsError(try Transactions.storagePlan(key: key, plan: EgoStorage.plans[0], billing: .monthly, nonce: 4, fee: 1))
     }
 
     func testFilesRoundTripAcrossBlocks() throws {

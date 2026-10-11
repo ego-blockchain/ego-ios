@@ -9,7 +9,12 @@ import Crypto
 /// the storage pool, read back from the chain, and files encrypted on the
 /// device in 256 KB blocks before they go anywhere.
 public enum EgoStorage {
+    /// Where plans paid in EGOC went, before plans moved to EGUSD.
     public static let poolAddress = "egot1storagefees000000000000000000000000000000"
+    /// Where plans are paid now, in EGUSD.
+    public static let feeSink = "egot1feesink0000000000000000000000000000000"
+    /// An EGOC plan counts if it paid at least this share of the price at today's EGOC price.
+    public static let egocPlanTolerance = 0.5
     public static let freeBytes: UInt64 = 5_000_000_000
     /// A lapsed plan keeps its space this long, as on Ego Desktop.
     public static let graceSeconds: Int64 = 30 * 86_400
@@ -32,6 +37,8 @@ public enum EgoStorage {
 
         public var bytes: UInt64 { gb * 1_000_000_000 }
         public func priceUsd(_ billing: Billing) -> Double { billing == .annual ? annualUsd : monthlyUsd }
+        /// The price in EGUSD credits, one cent each.
+        public func credits(_ billing: Billing) -> UInt64 { UInt64((priceUsd(billing) * 100).rounded()) }
         public var isFree: Bool { monthlyUsd == 0 }
     }
 
@@ -55,27 +62,51 @@ public enum EgoStorage {
         public func inGrace(now: Int64) -> Bool { !active(now: now) && now < expiresAt + EgoStorage.graceSeconds }
     }
 
-    /// The memo Ego Desktop writes, which is also how a plan is recognised on chain.
+    /// The memo of an EGUSD plan payment, as Ego Desktop's subscribe_storage_plan writes it.
+    public static func planMemo(for plan: Plan, billing: Billing) -> String {
+        "credits_pay:\(plan.credits(billing)):plan:\(plan.name):\(billing.rawValue)"
+    }
+
+    /// The memo plans paid in EGOC carried.
     public static func memo(for plan: Plan, billing: Billing) -> String {
         "Ego Storage \(plan.name) – \(billing.rawValue) (\(String(format: "$%.2f", plan.priceUsd(billing))))"
     }
 
-    /// The latest plan payment from `address`, read the way Ego Desktop's quota check reads it.
-    public static func subscription(in history: [HistoryItem], of address: String) -> Subscription? {
-        let payments = history.filter {
-            $0.from == address && $0.to == poolAddress && ($0.txType ?? "transfer") == "transfer"
-                && ($0.memo ?? "").hasPrefix("Ego Storage ")
+    private static func paid(_ name: Substring, _ billing: Substring) -> (Plan, Billing)? {
+        guard let plan = plans.first(where: { !$0.isFree && $0.name == name }),
+              let billing = Billing(rawValue: String(billing)) else { return nil }
+        return (plan, billing)
+    }
+
+    /// The plan a payment buys, checked as Ego Desktop's quota check does.
+    static func plan(of item: HistoryItem, egocPriceMicroUsd: UInt64?) -> (Plan, Billing)? {
+        let memo = item.memo ?? ""
+        if item.txType == "credits_pay", item.to == feeSink {
+            let parts = memo.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 5, parts[0] == "credits_pay", parts[2] == "plan", let credits = UInt64(parts[1]),
+                  let (plan, billing) = paid(parts[3], parts[4]), credits >= plan.credits(billing) else { return nil }
+            return (plan, billing)
         }
-        guard let latest = payments.max(by: { $0.timestamp < $1.timestamp }) else { return nil }
-        let memo = latest.memo ?? ""
-        let plan = plans.last { !$0.isFree && memo.contains($0.name) } ?? plans[0]
-        return Subscription(
-            plan: plan,
-            billing: memo.contains("annual") ? .annual : .monthly,
-            paidAt: latest.timestamp,
-            confirmed: latest.blockHeight != nil,
-            hash: latest.hash
-        )
+        if (item.txType ?? "transfer") == "transfer", item.to == poolAddress, memo.hasPrefix("Ego Storage ") {
+            let rest = memo.dropFirst("Ego Storage ".count)
+            guard let space = rest.firstIndex(of: " "), let price = egocPriceMicroUsd, price > 0 else { return nil }
+            let name = rest[..<space]
+            let billing = rest[space...].drop { $0 == " " || $0 == "–" || $0 == "-" }.prefix { $0 != " " }
+            guard let (plan, b) = paid(name, billing) else { return nil }
+            let paidUsd = Double(item.amount) / 1e6 * Double(price) / 1e6
+            return paidUsd >= plan.priceUsd(b) * egocPlanTolerance ? (plan, b) : nil
+        }
+        return nil
+    }
+
+    /// The newest valid plan payment from `address`.
+    public static func subscription(in history: [HistoryItem], of address: String, egocPriceMicroUsd: UInt64?) -> Subscription? {
+        let plans = history.filter { $0.from == address }.compactMap { item in
+            plan(of: item, egocPriceMicroUsd: egocPriceMicroUsd).map { (item, $0) }
+        }
+        guard let (latest, (plan, billing)) = plans.max(by: { $0.0.timestamp < $1.0.timestamp }) else { return nil }
+        return Subscription(plan: plan, billing: billing, paidAt: latest.timestamp,
+                            confirmed: latest.blockHeight != nil, hash: latest.hash)
     }
 
     /// Space the wallet may fill: a paid plan while it runs and through its grace period, else Free.
@@ -83,25 +114,18 @@ public enum EgoStorage {
         guard let s = subscription, s.confirmed, now < s.expiresAt + graceSeconds else { return freeBytes }
         return max(s.plan.bytes, freeBytes)
     }
-
-    /// A dollar price in µEGOC at `priceMicroUsd` per EGOC, never under 1 EGOC, as Ego Desktop rounds it.
-    public static func priceUegoc(usd: Double, priceMicroUsd: UInt64) -> UInt64? {
-        guard usd > 0, priceMicroUsd > 0 else { return nil }
-        let uegoc = (usd * 1e12 / Double(priceMicroUsd)).rounded()
-        guard uegoc.isFinite, uegoc < Double(UInt64.max) else { return nil }
-        return max(1_000_000, UInt64(uegoc))
-    }
 }
 
 public extension Transactions {
-    /// Pays for a storage plan. The pool isn't an ordinary address, so it's named here rather than checked.
+    /// Pays for a storage plan in EGUSD, as Ego Desktop does. The fee sink isn't
+    /// an ordinary address, so it's named here rather than checked.
     static func storagePlan(
-        key: EgoKey, plan: EgoStorage.Plan, billing: EgoStorage.Billing, amount: UInt64,
+        key: EgoKey, plan: EgoStorage.Plan, billing: EgoStorage.Billing,
         nonce: UInt64, fee: UInt64, timestamp: Int64 = Int64(Date().timeIntervalSince1970)
     ) throws -> SignedTransaction {
-        guard amount > 0, !plan.isFree else { throw TransactionError.zeroAmount }
-        return try sign(key: key, to: EgoStorage.poolAddress, amount: amount, nonce: nonce, fee: fee,
-                        memo: EgoStorage.memo(for: plan, billing: billing), txType: "transfer", timestamp: timestamp)
+        guard !plan.isFree else { throw TransactionError.zeroAmount }
+        return try sign(key: key, to: EgoStorage.feeSink, amount: 0, nonce: nonce, fee: fee,
+                        memo: EgoStorage.planMemo(for: plan, billing: billing), txType: "credits_pay", timestamp: timestamp)
     }
 }
 

@@ -65,7 +65,7 @@ final class StorageStore: ObservableObject {
         if let c { capacity = c }
         if let p { priceMicroUsd = p }
         if let h {
-            subscription = EgoStorage.subscription(in: h, of: owner)
+            subscription = EgoStorage.subscription(in: h, of: owner, egocPriceMicroUsd: p ?? priceMicroUsd)
             subscriptionChecked = true
             if subscription != nil && !planChosen { chooseFree() }
         }
@@ -160,10 +160,6 @@ final class StorageStore: ObservableObject {
         return s.plan
     }
 
-    func price(_ plan: EgoStorage.Plan, _ billing: EgoStorage.Billing) -> UInt64? {
-        priceMicroUsd.flatMap { EgoStorage.priceUegoc(usd: plan.priceUsd(billing), priceMicroUsd: $0) }
-    }
-
     /// Whether the network has room for a plan, as Ego Desktop checks before selling one.
     func networkHasRoom(for plan: EgoStorage.Plan) -> Bool {
         plan.isFree || (capacity.map { $0.freeBytes >= plan.bytes } ?? false)
@@ -171,19 +167,17 @@ final class StorageStore: ObservableObject {
 
     func subscribe(_ plan: EgoStorage.Plan, billing: EgoStorage.Billing) async throws -> String {
         guard let app else { throw WalletError.locked }
-        guard let amount = price(plan, billing) else { throw StorePlanError.noPrice }
-        let hash = try await app.payStoragePlan(plan, billing: billing, amount: amount)
+        let hash = try await app.payStoragePlan(plan, billing: billing)
         chooseFree()
         await refresh()
         return hash
     }
 
     enum StorePlanError: LocalizedError {
-        case noPrice, full, locked
+        case full, locked
 
         var errorDescription: String? {
             switch self {
-            case .noPrice: return "The EGOC price isn't available right now. Try again in a moment."
             case .full: return "That's more than your plan's space. Choose a bigger plan or delete some files."
             case .locked: return "Unlock your wallet first."
             }
