@@ -72,6 +72,22 @@ struct PlansPage: View {
                 action
             }
         }
+        .toolbar {
+            if !firstTime {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Brand.muted)
+                            .frame(width: 32, height: 32)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("Close")
+                }
+            }
+        }
     }
 
     private var header: some View {

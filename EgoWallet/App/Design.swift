@@ -14,11 +14,25 @@ enum Haptics {
 extension Brand {
     static let violet = Color(red: 0.49, green: 0.36, blue: 1.0)
     static let glow = LinearGradient(colors: [Brand.lime, Brand.mint], startPoint: .topLeading, endPoint: .bottomTrailing)
+    static let aurora = [Brand.lime, Brand.mint, Brand.violet]
+
+    // P2P Trade: warm market light; buying is green, selling is coral.
+    static let amber = Color(red: 1.0, green: 0.71, blue: 0.24)
+    static let coral = Color(red: 1.0, green: 0.42, blue: 0.40)
+    static let emerald = Color(red: 0.20, green: 0.88, blue: 0.56)
+    static let tradeAurora = [Brand.amber, Brand.coral, Color(red: 0.95, green: 0.30, blue: 0.62)]
+
+    // Chat: violet to sky, with a touch of pink.
+    static let sky = Color(red: 0.27, green: 0.78, blue: 1.0)
+    static let pink = Color(red: 1.0, green: 0.42, blue: 0.78)
+    static let chatAurora = [Brand.violet, Brand.sky, Brand.pink]
+    static let chatGlow = LinearGradient(colors: [Brand.violet, Brand.sky], startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
 /// Slow drifting light behind the dark background.
 struct AuroraBackground: View {
     var intensity: Double = 1
+    var colors: [Color] = Brand.aurora
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -28,9 +42,9 @@ struct AuroraBackground: View {
                 let w = geo.size.width, h = geo.size.height
                 ZStack {
                     Brand.ink
-                    blob(Brand.lime, size: w * 0.9, x: w * (0.15 + 0.12 * sin(t * 0.11)), y: h * (0.12 + 0.06 * cos(t * 0.09)), opacity: 0.22)
-                    blob(Brand.mint, size: w * 0.8, x: w * (0.85 + 0.10 * cos(t * 0.07)), y: h * (0.38 + 0.08 * sin(t * 0.13)), opacity: 0.16)
-                    blob(Brand.violet, size: w * 1.0, x: w * (0.30 + 0.15 * sin(t * 0.05 + 1)), y: h * (0.92 + 0.05 * cos(t * 0.08)), opacity: 0.20)
+                    blob(colors[0], size: w * 0.9, x: w * (0.15 + 0.12 * sin(t * 0.11)), y: h * (0.12 + 0.06 * cos(t * 0.09)), opacity: 0.22)
+                    blob(colors[1], size: w * 0.8, x: w * (0.85 + 0.10 * cos(t * 0.07)), y: h * (0.38 + 0.08 * sin(t * 0.13)), opacity: 0.16)
+                    blob(colors[2], size: w * 1.0, x: w * (0.30 + 0.15 * sin(t * 0.05 + 1)), y: h * (0.92 + 0.05 * cos(t * 0.08)), opacity: 0.20)
                 }
             }
         }
@@ -657,11 +671,12 @@ struct OutlineButtonStyle: ButtonStyle {
 
 /// A pushed page in the same look as the flows: aurora behind, cards in a column.
 struct GlassPage<Content: View>: View {
+    var aurora: [Color] = Brand.aurora
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         ZStack {
-            AuroraBackground(intensity: 0.7)
+            AuroraBackground(intensity: 0.7, colors: aurora)
             ScrollView {
                 VStack(spacing: 16) { content() }
                     .padding(.horizontal, 20)

@@ -1,3 +1,4 @@
+import EgoKit
 import SwiftUI
 
 struct RootView: View {
@@ -133,6 +134,23 @@ enum DemoFlow {
         return args[i + 1]
     }
 
+    static var demoFeed: ChatFeed {
+        let now = Int64(Date().timeIntervalSince1970)
+        func post(_ id: Int, _ from: String, _ name: String, _ body: String, mine: Bool = false, votes: Int = 0) -> String {
+            #"{"id":"p\#(id)","from":"\#(from)","name":"\#(name)","body":"\#(body)","ts":\#(now - Int64(600 - id * 60)),"mine":\#(mine),"edited":false,"change_until":null,"removal_votes":\#(votes),"my_vote":false,"removed_until":null}"#
+        }
+        let posts = [
+            post(1, "egot1qk2v8xw0a9m3", "Lena", "Just set up a node on my old laptop. Storage page is super clear."),
+            post(2, "egot1qk2v8xw0a9m3", "Lena", "Anyone sharing space on testnet yet?"),
+            post(3, "egot1zz8y7rp4c2nd", "", "Running two desktops here, 400 GB shared."),
+            post(4, "egot1me00000000000", "Ari", "Same, the phone app picks it up right away 🙌", mine: true),
+            post(5, "egot1me00000000000", "Ari", "Delete now removes the copies everywhere too.", mine: true),
+            post(6, "egot1spam0000000xx", "", "free coins dm me", votes: 3),
+        ].joined(separator: ",")
+        let json = #"{"me":"egot1me00000000000","my_name":"Ari","my_removed_until":null,"threshold":5,"ban_days":14,"oldest":null,"posts":[\#(posts)]}"#
+        return try! JSONDecoder().decode(ChatFeed.self, from: Data(json.utf8))
+    }
+
     @MainActor @ViewBuilder static var view: some View {
         switch current {
         case "receive": ReceiveView(address: "egot1yr99jpx3lq7s6m5kt0dz4n8c2w9vfh3g5qvqckfx")
@@ -142,6 +160,24 @@ enum DemoFlow {
         case "library": NavigationStack { LibraryView().navigationTitle("Storage") }.environmentObject(StorageStore())
         case "presalecard": VStack { PresaleCard(); Spacer() }.padding(16).screenBackground()
         case "restore": NavigationStack { ImportWalletView() }
+        case "market": MarketView()
+        case "planssheet": NavigationStack { PlansPage(firstTime: false) }.environmentObject(StorageStore())
+        case "chat":
+            ZStack {
+                AuroraBackground(intensity: 0.55, colors: Brand.chatAurora)
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ChatIntro(feed: demoFeed)
+                        DayDivider(date: Date())
+                        ForEach(Array(demoFeed.posts.enumerated()), id: \.element.id) { i, post in
+                            ChatBubble(post: post, threshold: 5,
+                                       first: i == 0 || demoFeed.posts[i - 1].from != post.from,
+                                       last: i + 1 == demoFeed.posts.count || demoFeed.posts[i + 1].from != post.from)
+                        }
+                    }
+                    .padding(12)
+                }
+            }
         case "done":
             FlowSheet(icon: "arrow.up.right", title: "On its way", step: 2) {
                 SuccessBurst(title: "Sent", subtitle: "It shows as pending until the network confirms it.")
