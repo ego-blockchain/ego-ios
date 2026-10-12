@@ -294,7 +294,8 @@ struct PresaleView: View {
                     if method == .crypto { cryptoContent } else { cardContent }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
-                passwordCard
+                // A card payer needs the password only once the payment has gone through.
+                if method == .crypto || cardPaid { passwordCard }
                 PresaleSteps()
                 NoteCard(text: "Ego is on public testnet. Mainnet has no launch date yet and the security audit is still planned. EGOC has no market price, so only spend what you can afford to lose.",
                          icon: "exclamationmark.shield.fill", tint: Brand.warning)
@@ -309,9 +310,7 @@ struct PresaleView: View {
                     .buttonStyle(GlowButtonStyle())
                     .disabled(config == nil || egocForCrypto <= 0 || !passwordsOK || busy)
             } else {
-                Button(busy ? "Making your IOU…" : "Make IOU") { makeCardIOU() }
-                    .buttonStyle(GlowButtonStyle())
-                    .disabled(!cardPaid || session == nil || !passwordsOK || busy)
+                cardFooter
             }
         }
         .task { await load() }
@@ -366,29 +365,6 @@ struct PresaleView: View {
         )
         receiveField(egocForCard, decimals: 2)
         if session == nil {
-            Button {
-                startCard()
-            } label: {
-                HStack(spacing: 12) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "creditcard.fill")
-                        Image(systemName: "apple.logo")
-                    }
-                    .font(.system(size: 20, weight: .semibold))
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(busy ? "Opening Stripe…" : "Card or Apple Pay")
-                            .font(.system(.title3, design: .rounded, weight: .heavy))
-                        Text("Visa · Mastercard · Amex")
-                            .font(.caption.weight(.medium))
-                            .opacity(0.6)
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 16, weight: .heavy))
-                }
-            }
-            .buttonStyle(CardPayButtonStyle())
-            .disabled(config == nil || usdAmount < Presale.minimumCardUsd || busy)
             NoteCard(text: "Checkout runs on Stripe in your browser.", icon: "lock.fill")
             GlassField(label: "Already paid?", icon: "arrow.uturn.backward") {
                 DisclosureGroup("Resume with the checkout session ID") {
@@ -413,15 +389,47 @@ struct PresaleView: View {
             NoteCard(text: cardPaid ? "Payment confirmed. Set your IOU password below." : "Finish paying in the browser, then come back and check.",
                      icon: cardPaid ? "checkmark.circle.fill" : "clock.fill",
                      tint: cardPaid ? Brand.mint : Brand.warning)
-            if !cardPaid {
-                Button {
-                    checkCard()
-                } label: {
-                    Label(busy ? "Checking…" : "Check payment", systemImage: "arrow.clockwise")
+        }
+    }
+
+    /// The bottom button in Card mode follows the payment: pay, then check it, then make the IOU.
+    @ViewBuilder private var cardFooter: some View {
+        if session == nil {
+            Button {
+                startCard()
+            } label: {
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "creditcard.fill")
+                        Image(systemName: "apple.logo")
+                    }
+                    .font(.system(size: 20, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(busy ? "Opening Stripe…" : "Card or Apple Pay")
+                            .font(.system(.title3, design: .rounded, weight: .heavy))
+                        Text("Visa · Mastercard · Amex")
+                            .font(.caption.weight(.medium))
+                            .opacity(0.6)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 16, weight: .heavy))
                 }
-                .buttonStyle(OutlineButtonStyle())
-                .disabled(busy)
             }
+            .buttonStyle(CardPayButtonStyle())
+            .disabled(config == nil || usdAmount < Presale.minimumCardUsd || busy)
+        } else if !cardPaid {
+            Button {
+                checkCard()
+            } label: {
+                Label(busy ? "Checking…" : "Check payment", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(GlowButtonStyle())
+            .disabled(busy)
+        } else {
+            Button(busy ? "Making your IOU…" : "Make IOU") { makeCardIOU() }
+                .buttonStyle(GlowButtonStyle())
+                .disabled(!passwordsOK || busy)
         }
     }
 
