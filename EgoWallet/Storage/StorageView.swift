@@ -128,21 +128,27 @@ struct PlansPage: View {
                     }
                     Text(sizeLabel(p.gb)).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.muted)
                     if !room {
-                        Text("Waiting for network space").font(.caption).foregroundStyle(Brand.warning)
+                        Text("Waiting for network space").font(.caption).foregroundStyle(Brand.warning).lineLimit(1)
                     }
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // A fixed-width price column, so switching Monthly and Yearly doesn't push anything sideways.
                 VStack(alignment: .trailing, spacing: 2) {
                     if p.isFree {
                         Text("Free").font(.system(.title3, design: .rounded, weight: .heavy)).foregroundStyle(Brand.text)
                     } else {
                         Text(String(format: "$%.2f", billing == .annual ? p.annualUsd / 12 : p.monthlyUsd))
                             .font(.system(.title3, design: .rounded, weight: .heavy))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
                             .foregroundStyle(on ? AnyShapeStyle(Brand.glow) : AnyShapeStyle(Brand.text))
-                        Text(billing == .annual ? "a month, billed yearly" : "a month")
+                        Text(billing == .annual ? "a month,\nbilled yearly" : "a month")
                             .font(.caption2).foregroundStyle(Brand.muted)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .frame(width: 96, alignment: .trailing)
             }
             .padding(16)
             .background(.ultraThinMaterial.opacity(on ? 0.75 : 0.45), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -200,7 +206,10 @@ struct PlansPage: View {
             Button(store.planChosen ? "Stay on Free" : "Start with Free 5 GB") { finishFree() }
                 .buttonStyle(GlowButtonStyle())
         } else if isCurrent {
-            NoteCard(text: "You're on this plan. It runs until \(expiry).", icon: "checkmark.circle.fill", tint: Brand.mint)
+            NoteCard(text: store.autoRenew
+                     ? "You're on this plan. It renews automatically after \(expiry); you can stop that in Storage."
+                     : "You're on this plan. It runs until \(expiry) and won't renew.",
+                     icon: "checkmark.circle.fill", tint: Brand.mint)
         } else if !store.networkHasRoom(for: plan) {
             NoteCard(text: "The network doesn't have \(sizeLabel(plan.gb)) free yet, so this plan can't be bought. It opens as more Ego Desktop computers share space.", icon: "hourglass", tint: Brand.warning)
         } else {
@@ -209,7 +218,7 @@ struct PlansPage: View {
                     Task { await pay() }
                 }
                 if affordable {
-                    Text("\(EGUSD.format(cost)) for \(billing == .annual ? "a year" : "a month"), paid in EGUSD, so the price never moves with EGOC.")
+                    Text("\(EGUSD.format(cost)) for \(billing == .annual ? "a year" : "a month"), paid in EGUSD, so the price never moves with EGOC. Renews automatically; stop any time in Storage.")
                         .font(.caption)
                         .foregroundStyle(Brand.muted)
                         .multilineTextAlignment(.center)
@@ -282,6 +291,7 @@ struct LibraryView: View {
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var importing = false
     @State private var opened: LibraryFile?
+    @State private var confirmStopRenew = false
 
     private var shown: [LibraryFile] { store.files(of: filter) }
 
@@ -392,6 +402,10 @@ struct LibraryView: View {
             }
             .font(.caption)
             .foregroundStyle(Brand.muted)
+            if let s = store.subscription, !s.plan.isFree, s.confirmed, s.active(now: store.now) || s.inGrace(now: store.now) {
+                Divider().overlay(Color.white.opacity(0.06))
+                renewRow(s)
+            }
             Divider().overlay(Color.white.opacity(0.06))
             Toggle(isOn: $store.optimize) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -408,6 +422,47 @@ struct LibraryView: View {
             .tint(Brand.mint)
         }
         .card()
+    }
+
+    private func renewRow(_ s: EgoStorage.Subscription) -> some View {
+        let date = Date(timeIntervalSince1970: TimeInterval(s.expiresAt)).formatted(date: .abbreviated, time: .omitted)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: store.autoRenew ? "arrow.triangle.2.circlepath" : "pause.circle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(store.autoRenew ? Brand.mint : Brand.muted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(store.autoRenew ? "Renews automatically" : "Auto-renew is off")
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        .foregroundStyle(Brand.text)
+                    Text(store.autoRenew
+                         ? "\(EGUSD.format(s.plan.credits(s.billing))) EGUSD after \(date), paid when you next open Ego Wallet."
+                         : "Your \(s.plan.name) plan ends \(date).")
+                        .font(.caption)
+                        .foregroundStyle(Brand.muted)
+                }
+                Spacer(minLength: 4)
+                Button(store.autoRenew ? "Stop" : "Turn on") {
+                    if store.autoRenew { confirmStopRenew = true } else { store.setAutoRenew(true); Haptics.success() }
+                }
+                .font(.system(.footnote, design: .rounded, weight: .bold))
+                .foregroundStyle(store.autoRenew ? Brand.danger : Brand.ink)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(store.autoRenew ? AnyShapeStyle(Brand.danger.opacity(0.15)) : AnyShapeStyle(Brand.glow), in: Capsule())
+            }
+            if let note = store.renewNote {
+                Text(note).font(.caption).foregroundStyle(Brand.warning)
+            }
+        }
+        .confirmationDialog("Stop auto-renew?", isPresented: $confirmStopRenew, titleVisibility: .visible) {
+            Button("Stop auto-renew", role: .destructive) {
+                store.setAutoRenew(false)
+                Haptics.tap()
+            }
+        } message: {
+            Text("Your \(s.plan.name) plan still runs until \(date). After that your files keep their space for 30 days, then you're back on Free 5 GB.")
+        }
     }
 
     private var planStatus: String {

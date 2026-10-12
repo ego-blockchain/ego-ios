@@ -57,6 +57,11 @@ struct MainTabs: View {
         }
         .environmentObject(storage)
         .onAppear { storage.attach(app) }
+        // Checks the plan on every unlock, so an automatic renewal doesn't wait for the Storage tab.
+        .task {
+            storage.attach(app)
+            await storage.refresh()
+        }
         .onChange(of: app.phase) { _, _ in storage.attach(app) }
     }
 }

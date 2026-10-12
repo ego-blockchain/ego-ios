@@ -39,6 +39,11 @@ final class StorageStore: ObservableObject {
         }
     }
 
+    /// Pay the same plan again when it ends. Turned on by the first plan payment; the owner can stop it.
+    @Published private(set) var autoRenew = true
+    /// Why an automatic renewal hasn't gone through, such as too little EGUSD.
+    @Published private(set) var renewNote: String?
+
     /// A downloaded file that isn't kept leaves the iPhone after this long unopened.
     static let keepOpenedSeconds: TimeInterval = 3 * 86_400
 
@@ -70,6 +75,7 @@ final class StorageStore: ObservableObject {
         planChosen = UserDefaults.standard.bool(forKey: planChosenKey) || !files.isEmpty
         kept = Set(UserDefaults.standard.stringArray(forKey: keptKey) ?? [])
         optimize = UserDefaults.standard.object(forKey: optimizeKey) as? Bool ?? true
+        autoRenew = UserDefaults.standard.object(forKey: autoRenewKey) as? Bool ?? true
         scanDevice()
     }
 
@@ -77,6 +83,9 @@ final class StorageStore: ObservableObject {
     private var keptKey: String { "storage.kept.\(owner)" }
     private var optimizeKey: String { "storage.optimize.\(owner)" }
     private var openedAtKey: String { "storage.openedAt.\(owner)" }
+    private var autoRenewKey: String { "storage.autoRenew.\(owner)" }
+    /// The end date of the period a renewal was last paid for, so one period is never paid twice.
+    private var renewedForKey: String { "storage.renewedFor.\(owner)" }
 
     private var openedAt: [String: Double] {
         get { UserDefaults.standard.dictionary(forKey: openedAtKey) as? [String: Double] ?? [:] }
@@ -114,6 +123,7 @@ final class StorageStore: ObservableObject {
             subscription = EgoStorage.subscription(in: h, of: owner, egocPriceMicroUsd: p ?? priceMicroUsd)
             subscriptionChecked = true
             if subscription != nil && !planChosen { chooseFree() }
+            await renewIfDue()
         }
         problem = (c == nil && h == nil) ? "Couldn't reach the Ego network. Your files on this iPhone still open." : nil
         if c != nil {
@@ -280,9 +290,44 @@ final class StorageStore: ObservableObject {
     func subscribe(_ plan: EgoStorage.Plan, billing: EgoStorage.Billing) async throws -> String {
         guard let app else { throw WalletError.locked }
         let hash = try await app.payStoragePlan(plan, billing: billing)
+        setAutoRenew(true)
         chooseFree()
         await refresh()
         return hash
+    }
+
+    func setAutoRenew(_ on: Bool) {
+        autoRenew = on
+        UserDefaults.standard.set(on, forKey: autoRenewKey)
+        if !on { renewNote = nil }
+        if on { Task { await renewIfDue() } }
+    }
+
+    /// When a paid plan has just ended, pays the same plan again. Each payment starts a fresh period,
+    /// so renewing after the end (while the 30-day grace keeps the space) loses no days.
+    /// The wallet signs it, so this happens when Ego Wallet is open and unlocked.
+    func renewIfDue() async {
+        guard autoRenew, let app, app.key != nil, let s = subscription, s.confirmed, !s.plan.isFree,
+              !s.active(now: now), s.inGrace(now: now) else { return }
+        let renewedFor = Int64(UserDefaults.standard.integer(forKey: renewedForKey))
+        guard renewedFor != s.expiresAt else { return }
+        let cost = s.plan.credits(s.billing)
+        let have = app.spendableCredits ?? 0
+        guard have >= cost else {
+            renewNote = "Auto-renew is waiting: \(s.plan.name) needs \(EGUSD.format(cost)) EGUSD and you have \(EGUSD.format(have)). Convert some EGOC to EGUSD."
+            return
+        }
+        UserDefaults.standard.set(Int(s.expiresAt), forKey: renewedForKey)
+        do {
+            _ = try await app.payStoragePlan(s.plan, billing: s.billing)
+            renewNote = nil
+            if let h = try? await app.longHistory() {
+                subscription = EgoStorage.subscription(in: h, of: owner, egocPriceMicroUsd: priceMicroUsd)
+            }
+        } catch {
+            UserDefaults.standard.removeObject(forKey: renewedForKey)
+            renewNote = "Auto-renew couldn't pay yet: \(app.message(for: error))"
+        }
     }
 
     enum StorePlanError: LocalizedError {

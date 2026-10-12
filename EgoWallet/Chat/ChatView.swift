@@ -129,7 +129,6 @@ struct ChatView: View {
                     ScrollView {
                         LazyVStack(spacing: 2) {
                             if let feed = chat.feed {
-                                ChatIntro(feed: feed).padding(.bottom, 12)
                                 if feed.posts.isEmpty {
                                     Text("No messages yet. Say hello 👋")
                                         .font(.subheadline)
@@ -261,21 +260,29 @@ struct ChatView: View {
         }
     }
 
+    /// Fixed at the top: what this chat is, its rules, and your profile. Messages scroll beneath it.
     private var header: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
+                Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(Brand.chatGlow, in: Circle())
+                    .shadow(color: Brand.violet.opacity(0.5), radius: 8)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Community chat")
+                    Text("Everyone on Ego")
                         .font(.system(.headline, design: .rounded, weight: .heavy))
                         .foregroundStyle(Brand.text)
                     if let feed = chat.feed {
                         let people = Set(feed.posts.map(\.from)).count
-                        Text("\(people) \(people == 1 ? "person" : "people") · everyone on Ego")
+                        Label("\(people) \(people == 1 ? "person" : "people") · signed by each wallet", systemImage: "signature")
                             .font(.caption)
                             .foregroundStyle(Brand.muted)
+                            .lineLimit(1)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 NavigationLink {
                     ChatProfileView()
                 } label: {
@@ -294,14 +301,25 @@ struct ChatView: View {
                 }
                 .accessibilityLabel("Your chat profile")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            if let feed = chat.feed {
+                Text("Anyone can read this. \(feed.threshold) removal votes in \(feed.banDays) days remove someone for \(feed.banDays) days. Hold a message to react, copy, edit or vote.")
+                    .font(.caption2)
+                    .foregroundStyle(Brand.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let problem = chat.problem {
-                ProblemBanner(text: problem).padding(.horizontal, 12).padding(.bottom, 8)
+                ProblemBanner(text: problem)
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
         .background(.ultraThinMaterial)
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1) }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(LinearGradient(colors: [Brand.violet.opacity(0.5), Brand.sky.opacity(0.2)], startPoint: .leading, endPoint: .trailing))
+                .frame(height: 1)
+        }
     }
 
     private func day(_ ts: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
