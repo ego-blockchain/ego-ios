@@ -680,7 +680,9 @@ struct GlassPage<Content: View>: View {
             ScrollView {
                 VStack(spacing: 16) { content() }
                     .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
+                    // Room under the page title before the first card.
+                    .padding(.top, 28)
+                    .padding(.bottom, 16)
             }
             .scrollDismissesKeyboard(.interactively)
         }

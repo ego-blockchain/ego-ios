@@ -199,6 +199,90 @@ struct EgoTabBar: View {
     }
 }
 
+/// Two people sending Ego to each other: coins rise from her phone and arc over to his.
+struct ConnectionScene: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // Where the phones are, and the top of the arc, as fractions of the picture.
+    private let from = CGPoint(x: 0.335, y: 0.62)
+    private let to = CGPoint(x: 0.705, y: 0.655)
+    private let peak = CGPoint(x: 0.52, y: 0.16)
+    private let gold = Color(red: 1.0, green: 0.85, blue: 0.45)
+    private let coins = 5
+
+    var body: some View {
+        // Drawn on a canvas over the picture: nothing here feeds back into layout.
+        Image("LockPair")
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .overlay {
+                TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
+                    let t = reduceMotion ? 0.5 : context.date.timeIntervalSinceReferenceDate
+                    Canvas { g, size in
+                        var glow = g
+                        glow.addFilter(.blur(radius: 8))
+                        glow.stroke(arc(size), with: .color(gold.opacity(0.25)), lineWidth: 10)
+                        for k in 0..<3 {
+                            g.stroke(arc(size, lift: CGFloat(k - 1) * 0.045), with: .color(gold.opacity(0.8)),
+                                     style: StrokeStyle(lineWidth: 1.4, lineCap: .round, dash: [1.5, 8], dashPhase: CGFloat(-t * 28) + CGFloat(k * 5)))
+                        }
+                        guard let coin = g.resolveSymbol(id: 0) else { return }
+                        for i in 0..<coins {
+                            let p = reduceMotion ? Double(i + 1) / Double(coins + 1)
+                                : (t * 0.2 + Double(i) / Double(coins)).truncatingRemainder(dividingBy: 1)
+                            let side = size.width * (0.05 + 0.03 * sin(.pi * p))
+                            let at = point(p, size)
+                            var layer = g
+                            layer.opacity = min(1, min(p, 1 - p) * 7)
+                            layer.draw(coin, in: CGRect(x: at.x - side / 2, y: at.y - side / 2, width: side, height: side))
+                        }
+                    } symbols: {
+                        EgoCoin(size: 60).tag(0)
+                    }
+                }
+            }
+            // The picture is cut at their waists: fade that edge.
+            .mask(LinearGradient(stops: [.init(color: .black, location: 0.8), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+            .accessibilityElement()
+            .accessibilityLabel("Two people sending Ego to each other")
+    }
+
+    private func point(_ p: Double, _ size: CGSize, lift: CGFloat = 0) -> CGPoint {
+        let q = 1 - p
+        let x = q * q * from.x + 2 * q * p * peak.x + p * p * to.x
+        let y = q * q * from.y + 2 * q * p * (peak.y + lift) + p * p * to.y
+        return CGPoint(x: x * size.width, y: y * size.height)
+    }
+
+    private func arc(_ size: CGSize, lift: CGFloat = 0) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: from.x * size.width, y: from.y * size.height))
+            path.addQuadCurve(to: CGPoint(x: to.x * size.width, y: to.y * size.height),
+                              control: CGPoint(x: peak.x * size.width, y: (peak.y + lift) * size.height))
+        }
+    }
+}
+
+/// An Ego coin: the mark on a dark disc with a warm rim.
+struct EgoCoin: View {
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Color(red: 0.07, green: 0.07, blue: 0.09))
+            Image("EgoMark")
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .foregroundStyle(Color.white.opacity(0.92))
+                .padding(size * 0.2)
+        }
+        .frame(width: size, height: size)
+        .overlay(Circle().stroke(Color(red: 1.0, green: 0.85, blue: 0.45).opacity(0.8), lineWidth: max(1, size * 0.05)))
+        .shadow(color: Color(red: 1.0, green: 0.8, blue: 0.4).opacity(0.7), radius: size * 0.3)
+    }
+}
+
 struct LockView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
@@ -207,7 +291,8 @@ struct LockView: View {
     var body: some View {
         VStack(spacing: 22) {
             Spacer()
-            GlowingMark(size: 92)
+            ConnectionScene()
+                .frame(maxWidth: .infinity)
                 .reveal(0)
             VStack(spacing: 8) {
                 Text("Ego Wallet")
@@ -308,6 +393,8 @@ enum DemoFlow {
         case "library": NavigationStack { LibraryView().navigationTitle("Storage") }.environmentObject(StorageStore())
         case "presalecard": VStack { PresaleCard(); Spacer() }.padding(16).screenBackground()
         case "restore": NavigationStack { ImportWalletView() }
+        case "lock": LockView()
+        case "scene": VStack { Spacer(); ConnectionScene(); Spacer() }.background(Brand.ink)
         case "market": MarketView()
         case "tabs": MainTabs()
         case "filedetail":

@@ -32,6 +32,7 @@ struct EarningsView: View {
                 paidOnChain
             }
             .padding(16)
+            .padding(.top, 10)
         }
         .refreshable { await load() }
         .screenBackground()
