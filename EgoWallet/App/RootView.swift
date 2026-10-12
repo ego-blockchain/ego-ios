@@ -167,11 +167,13 @@ struct EgoTabBar: View {
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
-        .padding(5)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(0.08)))
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
+        .padding(.top, 6)
         .padding(.bottom, 2)
+        // A solid footer: pages end above it instead of showing through.
+        .frame(maxWidth: .infinity)
+        .background(Brand.card.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
     }
 }
 

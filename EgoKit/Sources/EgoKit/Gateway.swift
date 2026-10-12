@@ -114,6 +114,38 @@ public struct ChatPostView: Decodable, Equatable, Identifiable {
     }
 }
 
+/// One person's record in the community chat.
+public struct ChatMember: Decodable, Equatable {
+    public let address: String
+    public let name: String
+    public let avatar: String
+    public let posts: Int
+    public let firstPost: Int64?
+    public let lastPost: Int64?
+    public let reactionsReceived: Int
+    public let removalVotes: Int
+    public let threshold: Int
+    public let voteDays: Int
+    public let banDays: Int
+    public let myVote: Bool
+    public let removals: Int
+    public let removedUntil: Int64?
+    public let removedForGood: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case address, name, avatar, posts, threshold, removals
+        case firstPost = "first_post"
+        case lastPost = "last_post"
+        case reactionsReceived = "reactions_received"
+        case removalVotes = "removal_votes"
+        case voteDays = "vote_days"
+        case banDays = "ban_days"
+        case myVote = "my_vote"
+        case removedUntil = "removed_until"
+        case removedForGood = "removed_for_good"
+    }
+}
+
 public struct ChatReaction: Decodable, Equatable, Hashable {
     public let emoji: String
     public let count: Int
@@ -268,6 +300,10 @@ public final class GatewayClient {
     public func chatFeed(viewer: String, before: Int64? = nil) async throws -> ChatFeed {
         struct Params: Encodable { let viewer: String; let before: Int64? }
         return try await call("chat.feed", Params(viewer: viewer, before: before))
+    }
+
+    public func chatMember(address: String, viewer: String) async throws -> ChatMember {
+        try await call("chat.member", ["address": address, "viewer": viewer])
     }
 
     public func chatSubmit(_ wire: ChatWire) async throws {

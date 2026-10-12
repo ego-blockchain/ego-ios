@@ -1,9 +1,9 @@
 import Foundation
 
 public enum ChatRules {
-    public static let maxBodyCharacters = 500
+    public static let maxBodyCharacters = 4_000
     public static let maxNameCharacters = 24
-    public static let maxLines = 12
+    public static let maxLines = 80
     public static let changeWindow: Int64 = 3_600
 
     public static func cleanBody(_ raw: String) -> String? {
@@ -23,6 +23,9 @@ public enum ChatRules {
         else { return nil }
         return name
     }
+
+    /// A removal that never ends: someone removed a second time.
+    public static func isForGood(_ until: Int64?) -> Bool { (until ?? 0) > 32_503_680_000 }
 
     public static func canChange(postTimestamp: Int64, now: Int64) -> Bool {
         now >= postTimestamp && now - postTimestamp < changeWindow

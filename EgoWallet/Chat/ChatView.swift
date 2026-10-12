@@ -118,6 +118,7 @@ struct ChatView: View {
     @State private var attachment: ChatAttachment?
     @State private var uploading = false
     @State private var viewing: URL?
+    @State private var member: MemberRef?
 
     private let bottomID = "chat-bottom"
 
@@ -145,7 +146,8 @@ struct ChatView: View {
                                                first: !sameRun(previous, post), last: !sameRun(post, following),
                                                onReact: { emoji in Task { await chat.toggle(emoji, on: post, app) } },
                                                onEdit: { startEditing(post) },
-                                               onOpen: { viewing = $0 })
+                                               onOpen: { viewing = $0 },
+                                               onMember: { member = MemberRef(id: post.from) })
                                         .id(post.id)
                                         .contextMenu { menu(for: post) }
                                 }
@@ -250,6 +252,11 @@ struct ChatView: View {
                 Task { await attach(item) }
             }
             .quickLookPreview($viewing)
+            .sheet(item: $member, onDismiss: { Task { await chat.load(app) } }) { ref in
+                ChatMemberView(address: ref.id)
+                    .presentationDetents([.medium, .large])
+                    .presentationBackground(Brand.ink)
+            }
             .task {
                 storage.attach(app)
                 while !Task.isCancelled {
@@ -302,7 +309,7 @@ struct ChatView: View {
                 .accessibilityLabel("Your chat profile")
             }
             if let feed = chat.feed {
-                Text("Anyone can read this. \(feed.threshold) removal votes in \(feed.banDays) days remove someone for \(feed.banDays) days. Hold a message to react, copy, edit or vote.")
+                Text("Anyone can read this. \(feed.threshold) removal votes in \(feed.banDays) days remove someone for \(feed.banDays) days; a second removal is for good. Tap someone's picture to see their record.")
                     .font(.caption2)
                     .foregroundStyle(Brand.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -408,7 +415,9 @@ struct ChatView: View {
     private var composer: some View {
         VStack(spacing: 6) {
             if let until = chat.feed?.myRemovedUntil {
-                Label("Community votes removed you from the chat until \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(date: .abbreviated, time: .omitted)).", systemImage: "hand.raised.fill")
+                Label(ChatRules.isForGood(until)
+                      ? "Community votes removed you from the chat for good, after an earlier removal."
+                      : "Community votes removed you from the chat until \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(date: .abbreviated, time: .omitted)). A second removal is for good.", systemImage: "hand.raised.fill")
                     .font(.footnote)
                     .foregroundStyle(Brand.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -653,6 +662,199 @@ struct ChatView: View {
     }
 }
 
+struct MemberRef: Identifiable { let id: String }
+
+/// Someone's record in the chat, opened from their picture: how long they've been around,
+/// how they take part, past removals, and a vote to remove them.
+struct ChatMemberView: View {
+    let address: String
+    @EnvironmentObject private var app: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var member: ChatMember?
+    @State private var walletSince: Int64?
+    @State private var problem: String?
+    @State private var confirmVote = false
+    @State private var voting = false
+    @State private var copied = false
+
+    private var isMe: Bool { address == app.address }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                VStack(spacing: 8) {
+                    ProfilePicture(link: member?.avatar ?? "", fallback: member?.name ?? "", address: address, size: 84)
+                        .overlay(Circle().stroke(ProfilePicture.color(for: address), lineWidth: 2.5))
+                    Text(member.map { $0.name.isEmpty ? shortAddress(address) : $0.name } ?? " ")
+                        .font(.system(.title3, design: .rounded, weight: .heavy))
+                        .foregroundStyle(Brand.text)
+                    Button {
+                        UIPasteboard.general.string = address
+                        copied = true
+                        Haptics.tap()
+                    } label: {
+                        Label(copied ? "Copied" : shortAddress(address), systemImage: copied ? "checkmark" : "doc.on.doc")
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(Brand.muted)
+                    }
+                    if let member { standing(member) }
+                }
+                .padding(.top, 20)
+                if let problem { ProblemBanner(text: problem) }
+                if let member {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                        stat("On Ego since", walletSince.map(dateText) ?? "—", icon: "calendar")
+                        stat("Messages, 30 days", "\(member.posts)", icon: "bubble.left.fill")
+                        stat("Reactions received", "\(member.reactionsReceived)", icon: "heart.fill")
+                        stat("Past removals", "\(member.removals)", icon: "hand.raised.fill")
+                    }
+                    if let last = member.lastPost {
+                        Text("Last message \(relativeTime(last)).")
+                            .font(.caption)
+                            .foregroundStyle(Brand.muted)
+                    }
+                    if !isMe { voteCard(member) }
+                    rules(member)
+                } else if problem == nil {
+                    ProgressView().tint(Brand.sky).padding(30)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 24)
+        }
+        .background(AuroraBackground(intensity: 0.5, colors: Brand.chatAurora))
+        .task { await load() }
+    }
+
+    private func dateText(_ ts: Int64) -> String {
+        Date(timeIntervalSince1970: TimeInterval(ts)).formatted(date: .abbreviated, time: .omitted)
+    }
+
+    @ViewBuilder private func standing(_ m: ChatMember) -> some View {
+        let (text, tint, icon): (String, Color, String) =
+            m.removedForGood ? ("Removed for good", Brand.danger, "xmark.octagon.fill")
+            : m.removedUntil.map { ("Removed until \(dateText($0))", Brand.warning, "hand.raised.fill") }
+            ?? (m.removals > 0 ? ("Back after a removal · next one is for good", Brand.warning, "exclamationmark.triangle.fill")
+                : ("In good standing", Brand.mint, "checkmark.seal.fill"))
+        Label(text, systemImage: icon)
+            .font(.system(.caption, design: .rounded, weight: .bold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(tint.opacity(0.14), in: Capsule())
+    }
+
+    private func stat(_ label: String, _ value: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(label, systemImage: icon)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(Brand.muted)
+            Text(value)
+                .font(.system(.headline, design: .rounded, weight: .heavy))
+                .foregroundStyle(Brand.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func voteCard(_ m: ChatMember) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Removal votes")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .foregroundStyle(Brand.text)
+                Spacer()
+                Text("\(m.removalVotes) of \(m.threshold)")
+                    .font(.system(.subheadline, design: .rounded, weight: .heavy))
+                    .foregroundStyle(m.removalVotes > 0 ? Brand.danger : Brand.muted)
+            }
+            HStack(spacing: 4) {
+                ForEach(0..<m.threshold, id: \.self) { i in
+                    Capsule().fill(i < m.removalVotes ? Brand.danger : Color.white.opacity(0.1)).frame(height: 6)
+                }
+            }
+            if m.removedForGood || m.removedUntil != nil {
+                Text("They're removed right now, so there's nothing to vote on.")
+                    .font(.caption).foregroundStyle(Brand.muted)
+            } else if m.myVote {
+                Label("You voted to remove them", systemImage: "checkmark.circle.fill")
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Brand.muted)
+            } else {
+                Button {
+                    confirmVote = true
+                } label: {
+                    Label(voting ? "Voting…" : "Vote to remove", systemImage: "hand.raised.fill")
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .tint(Brand.danger)
+                .disabled(voting)
+            }
+        }
+        .padding(14)
+        .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .confirmationDialog("Vote to remove \(m.name.isEmpty ? shortAddress(address) : m.name)?", isPresented: $confirmVote, titleVisibility: .visible) {
+            Button("Vote to remove", role: .destructive) { Task { await vote() } }
+        } message: {
+            Text("Vote only for scams, abuse, vulgar language or spam. A vote can't be taken back.")
+        }
+    }
+
+    private func rules(_ m: ChatMember) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("How removal works", systemImage: "scalemass.fill")
+                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                .foregroundStyle(Brand.text)
+            ForEach([
+                "Anyone in the chat can vote to remove someone, once each. No company or moderator decides.",
+                "\(m.threshold) votes within \(m.voteDays) days remove them for \(m.banDays) days, and their messages from just before disappear too.",
+                "If they come back and get \(m.threshold) votes again, they're removed for good.",
+                "Votes are signed by each voter's wallet, and every Ego node counts them the same way.",
+            ], id: \.self) { line in
+                HStack(alignment: .top, spacing: 8) {
+                    Circle().fill(Brand.violet).frame(width: 5, height: 5).padding(.top, 6)
+                    Text(line).font(.caption).foregroundStyle(Brand.muted)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Brand.violet.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func load() async {
+        let (address, viewer) = (self.address, app.address)
+        do {
+            member = try await app.perform { try await $0.chatMember(address: address, viewer: viewer) }
+            problem = nil
+        } catch {
+            problem = app.message(for: error)
+        }
+        // How long the wallet has been on Ego: its oldest transaction this gateway returns.
+        if let history = try? await app.perform({ try await $0.history(of: address, limit: AppModel.historyMax) }) {
+            walletSince = history.map(\.timestamp).min() ?? member?.firstPost
+        } else {
+            walletSince = member?.firstPost
+        }
+    }
+
+    private func vote() async {
+        guard let key = app.key else { return }
+        voting = true
+        defer { voting = false }
+        do {
+            let wire = ChatWire.vote(try ChatSigner.vote(key: key, target: address, ts: Int64(Date().timeIntervalSince1970)))
+            try await app.perform { try await $0.chatSubmit(wire) }
+            Haptics.success()
+            await load()
+        } catch {
+            problem = app.message(for: error)
+        }
+    }
+}
+
 /// Your name and picture in the community chat.
 struct ChatProfileView: View {
     @EnvironmentObject private var app: AppModel
@@ -847,6 +1049,7 @@ struct ChatBubble: View {
     var onReact: (String) -> Void = { _ in }
     var onEdit: () -> Void = {}
     var onOpen: (URL) -> Void = { _ in }
+    var onMember: () -> Void = {}
 
     private var parts: [ChatPart] { ChatContent.parse(post.body) }
 
@@ -857,6 +1060,8 @@ struct ChatBubble: View {
             } else {
                 ProfilePicture(link: post.avatar, fallback: post.name, address: post.from, size: 30)
                     .opacity(last ? 1 : 0)
+                    .onTapGesture { onMember() }
+                    .accessibilityAddTraits(.isButton)
             }
             VStack(alignment: post.mine ? .trailing : .leading, spacing: 4) {
                 if first && !post.mine {
@@ -871,6 +1076,8 @@ struct ChatBubble: View {
                         }
                     }
                     .padding(.leading, 6)
+                    .contentShape(Rectangle())
+                    .onTapGesture { onMember() }
                 }
                 content
                     .onTapGesture(count: 2) { onReact("❤️") }
