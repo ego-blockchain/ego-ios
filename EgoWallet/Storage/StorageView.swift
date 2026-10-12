@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// Storage opens on the plans, as Ego Desktop's does, then shows the library.
 struct StorageView: View {
     @EnvironmentObject private var app: AppModel
-    @StateObject private var store = StorageStore()
+    @EnvironmentObject private var store: StorageStore
 
     var body: some View {
         NavigationStack {
@@ -20,9 +20,6 @@ struct StorageView: View {
             }
             .navigationTitle("Storage")
         }
-        .environmentObject(store)
-        .onAppear { store.attach(app) }
-        .onChange(of: app.phase) { _, _ in store.attach(app) }
         .task {
             store.clearOpenedCopies()
             while !Task.isCancelled {

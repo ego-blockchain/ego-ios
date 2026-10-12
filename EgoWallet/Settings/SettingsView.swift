@@ -12,6 +12,22 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink {
+                        ChatProfileView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundStyle(Brand.chatGlow)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Chat profile").font(.system(.body, design: .rounded, weight: .bold))
+                                Text("Your name and picture in the community chat").font(.caption).foregroundStyle(Brand.muted)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
                 Section("Wallet") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Address").font(.caption).foregroundStyle(Brand.muted)

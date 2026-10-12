@@ -135,23 +135,7 @@ final class StorageStore: ObservableObject {
         for file in waiting {
             working = "Uploading \(file.name)…"
             do {
-                let blocksDir = self.blocksDir
-                try await app.perform { client in
-                    for (i, entry) in file.manifest.blocks.enumerated() {
-                        let sealed = try Data(contentsOf: blocksDir.appendingPathComponent(entry.blockCid))
-                        try await client.putBlock(cid: entry.blockCid, sealed: sealed, key: key)
-                        if file.manifest.blocks.count > 4 {
-                            await MainActor.run { self.working = "Uploading \(file.name)… \(Int(Double(i + 1) / Double(file.manifest.blocks.count) * 100))%" }
-                        }
-                    }
-                    let missing = try await client.putManifest(file.manifest, key: key)
-                    if !missing.isEmpty { throw GatewayError.rpc(-32011, "The gateway lost part of this file. It'll be sent again.") }
-                }
-                if var entry = files.first(where: { $0.cid == file.cid }) {
-                    entry.state = .stored
-                    try? library?.update(entry)
-                    files = library?.files ?? []
-                }
+                try await send(file, key: key)
                 uploadNote = nil
             } catch GatewayError.rpc(AppModel.notHere, _) {
                 uploadNote = "Uploads start once a gateway runs the latest Ego Desktop. Your files stay encrypted on this iPhone until then."
@@ -162,6 +146,28 @@ final class StorageStore: ObservableObject {
                 problem = app.message(for: error)
                 return
             }
+        }
+    }
+
+    /// Sends one file's blocks and manifest to a gateway, and marks it stored.
+    private func send(_ file: LibraryFile, key: EgoKey) async throws {
+        guard let app else { throw StorePlanError.locked }
+        let blocksDir = self.blocksDir
+        try await app.perform { client in
+            for (i, entry) in file.manifest.blocks.enumerated() {
+                let sealed = try Data(contentsOf: blocksDir.appendingPathComponent(entry.blockCid))
+                try await client.putBlock(cid: entry.blockCid, sealed: sealed, key: key)
+                if file.manifest.blocks.count > 4 {
+                    await MainActor.run { self.working = "Uploading \(file.name)… \(Int(Double(i + 1) / Double(file.manifest.blocks.count) * 100))%" }
+                }
+            }
+            let missing = try await client.putManifest(file.manifest, key: key)
+            if !missing.isEmpty { throw GatewayError.rpc(-32011, "The gateway lost part of this file. It'll be sent again.") }
+        }
+        if var entry = files.first(where: { $0.cid == file.cid }) {
+            entry.state = .stored
+            try? library?.update(entry)
+            files = library?.files ?? []
         }
     }
 
@@ -351,6 +357,105 @@ final class StorageStore: ObservableObject {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try data.write(to: url, options: [.atomic, .completeFileProtection])
         return url
+    }
+
+    // MARK: Sharing
+
+    /// The biggest photo, video or GIF the chat takes.
+    static let maxShareBytes = 25_000_000
+
+    /// Encrypts one file, uploads it right away and adds it to the library, for sharing a link
+    /// to it (in the chat, or as a profile picture). Fails rather than waits when no gateway takes it.
+    func uploadForSharing(name: String, data: Data) async throws -> EgoShareLink {
+        guard library != nil, let key = app?.key else { throw StorePlanError.locked }
+        guard data.count <= Self.maxShareBytes else { throw ShareError.tooBig }
+        guard used + UInt64(data.count) <= quota else { throw StorePlanError.full }
+        let blocksDir = self.blocksDir
+        let file = try await Task.detached(priority: .userInitiated) { () throws -> EncryptedFile in
+            let file = try FileCrypto.encrypt(data)
+            for block in file.blocks {
+                try block.sealed.write(to: blocksDir.appendingPathComponent(block.cid), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            }
+            return file
+        }.value
+        var entry = LibraryFile(file: file, name: name)
+        entry.thumbnail = await Thumbnail.make(for: entry.kind, data: data)
+        try library?.add(entry)
+        files = library?.files ?? []
+        onDevice.insert(entry.cid)
+        try await send(entry, key: key)
+        try? sharedCopy(for: entry.cid, name: name).map { url in
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+        }
+        return EgoShareLink(cid: entry.cid, key: entry.key, name: name, from: owner)
+    }
+
+    enum ShareError: LocalizedError {
+        case tooBig, notFound
+
+        var errorDescription: String? {
+            switch self {
+            case .tooBig: return "That's too big to share here. The limit is 25 MB."
+            case .notFound: return "The network couldn't find that file. It may have been deleted."
+            }
+        }
+    }
+
+    private let sharedDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("SharedFiles", isDirectory: true)
+
+    private func sharedCopy(for cid: String, name: String) -> URL? {
+        let safe = (name as NSString).lastPathComponent.isEmpty ? "file" : (name as NSString).lastPathComponent
+        return sharedDir.appendingPathComponent(cid, isDirectory: true).appendingPathComponent(safe)
+    }
+
+    private var openingShared: [String: Task<URL, Error>] = [:]
+
+    /// Opens a file someone shared as an Ego link: from the cache, the library, or the network.
+    /// The link's key decrypts it, and its blocks are checked against the IDs in the manifest.
+    func openShared(_ link: EgoShareLink) async throws -> URL {
+        guard let url = sharedCopy(for: link.cid, name: link.name) else { throw ShareError.notFound }
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        if let running = openingShared[link.cid] { return try await running.value }
+        let task = Task { () throws -> URL in
+            let data: Data
+            if let mine = files.first(where: { $0.cid == link.cid }) {
+                data = try await contents(of: mine)
+            } else {
+                data = try await fetchShared(link)
+            }
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return url
+        }
+        openingShared[link.cid] = task
+        defer { openingShared[link.cid] = nil }
+        return try await task.value
+    }
+
+    private func fetchShared(_ link: EgoShareLink) async throws -> Data {
+        guard let app else { throw ShareError.notFound }
+        var manifest: StorageManifest?
+        for attempt in 0..<8 where manifest == nil {
+            manifest = try await app.perform { try await $0.getManifest(cid: link.cid) }
+            if manifest == nil { try await Task.sleep(for: .seconds(attempt < 3 ? 1 : 3)) }
+        }
+        guard let manifest else { throw ShareError.notFound }
+        var blocks: [String: Data] = [:]
+        for entry in manifest.blocks {
+            var found: Data?
+            for attempt in 0..<8 where found == nil {
+                found = try await app.perform { try await $0.getBlock(cid: entry.blockCid) }
+                if found == nil { try await Task.sleep(for: .seconds(attempt < 3 ? 1 : 3)) }
+            }
+            guard let data = found, StorageBlock.cid(for: data) == entry.blockCid else { throw ShareError.notFound }
+            blocks[entry.blockCid] = data
+        }
+        let key = link.key
+        return try await Task.detached(priority: .userInitiated) {
+            try FileCrypto.decrypt(manifest, key: key) { blocks[$0] }
+        }.value
     }
 
     func shareLink(for file: LibraryFile) -> String {

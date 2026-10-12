@@ -436,6 +436,24 @@ extension GatewayClient {
         return decoded
     }
 
+    /// A shared file's list of blocks, rebuilt in the phone's format and checked against its ID,
+    /// or nil while the network looks for it.
+    public func getManifest(cid: String) async throws -> StorageManifest? {
+        struct Block: Decodable {
+            let blockCid: String, nonceHex: String, size: Int
+            enum CodingKeys: String, CodingKey { case blockCid = "block_cid", nonceHex = "nonce_hex", size }
+        }
+        struct Answer: Decodable {
+            let totalSize: Int?, blocks: [Block]?
+            enum CodingKeys: String, CodingKey { case totalSize = "total_size", blocks }
+        }
+        let answer: Answer = try await call("storage.getManifest", ["cid": cid], at: "storage")
+        guard let blocks = answer.blocks, let total = answer.totalSize else { return nil }
+        let manifest = StorageManifest(totalSize: total, blocks: blocks.map { .init(blockCid: $0.blockCid, nonceHex: $0.nonceHex, size: $0.size) })
+        guard manifest.cid == cid else { throw StorageError.corrupt }
+        return manifest
+    }
+
     /// The files this gateway holds for `owner` on the network. Only these can safely leave the iPhone.
     public func storedFiles(owner: String) async throws -> Set<String> {
         struct Answer: Decodable { let files: [String]? }

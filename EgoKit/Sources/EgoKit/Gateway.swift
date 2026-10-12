@@ -96,9 +96,17 @@ public struct ChatPostView: Decodable, Equatable, Identifiable {
     public let removalVotes: Int
     public let myVote: Bool
     public let removedUntil: Int64?
+    /// The author's profile picture link; nodes before reactions and pictures don't send it.
+    public let avatarLink: String?
+    public let reactionCounts: [ChatReaction]?
+
+    public var avatar: String { avatarLink ?? "" }
+    public var reactions: [ChatReaction] { reactionCounts ?? [] }
 
     enum CodingKeys: String, CodingKey {
         case id, from, name, body, ts, mine, edited
+        case avatarLink = "avatar"
+        case reactionCounts = "reactions"
         case changeUntil = "change_until"
         case removalVotes = "removal_votes"
         case myVote = "my_vote"
@@ -106,10 +114,19 @@ public struct ChatPostView: Decodable, Equatable, Identifiable {
     }
 }
 
+public struct ChatReaction: Decodable, Equatable, Hashable {
+    public let emoji: String
+    public let count: Int
+    public let mine: Bool
+}
+
 public struct ChatFeed: Decodable, Equatable {
     public let me: String
     public let myName: String
+    public let myAvatarLink: String?
     public let myRemovedUntil: Int64?
+
+    public var myAvatar: String { myAvatarLink ?? "" }
     public let threshold: Int
     public let banDays: Int
     public let posts: [ChatPostView]
@@ -118,6 +135,7 @@ public struct ChatFeed: Decodable, Equatable {
     enum CodingKeys: String, CodingKey {
         case me, threshold, posts, oldest
         case myName = "my_name"
+        case myAvatarLink = "my_avatar"
         case myRemovedUntil = "my_removed_until"
         case banDays = "ban_days"
     }

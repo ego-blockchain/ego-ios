@@ -38,6 +38,10 @@ struct RootView: View {
 }
 
 struct MainTabs: View {
+    @EnvironmentObject private var app: AppModel
+    /// One storage store for the whole app: Chat and Settings upload through it too.
+    @StateObject private var storage = StorageStore()
+
     var body: some View {
         TabView {
             WalletView()
@@ -51,6 +55,9 @@ struct MainTabs: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
+        .environmentObject(storage)
+        .onAppear { storage.attach(app) }
+        .onChange(of: app.phase) { _, _ in storage.attach(app) }
     }
 }
 
@@ -136,13 +143,16 @@ enum DemoFlow {
 
     static var demoFeed: ChatFeed {
         let now = Int64(Date().timeIntervalSince1970)
-        func post(_ id: Int, _ from: String, _ name: String, _ body: String, mine: Bool = false, votes: Int = 0) -> String {
-            #"{"id":"p\#(id)","from":"\#(from)","name":"\#(name)","body":"\#(body)","ts":\#(now - Int64(600 - id * 60)),"mine":\#(mine),"edited":false,"change_until":null,"removal_votes":\#(votes),"my_vote":false,"removed_until":null}"#
+        func post(_ id: Int, _ from: String, _ name: String, _ body: String, mine: Bool = false, votes: Int = 0, reactions: String = "[]") -> String {
+            let until = mine ? "\(now + 1800)" : "null"
+            return #"{"id":"p\#(id)","from":"\#(from)","name":"\#(name)","body":"\#(body)","ts":\#(now - Int64(600 - id * 60)),"mine":\#(mine),"edited":false,"change_until":\#(until),"removal_votes":\#(votes),"my_vote":false,"removed_until":null,"reactions":\#(reactions)}"#
         }
         let posts = [
             post(1, "egot1qk2v8xw0a9m3", "Lena", "Just set up a node on my old laptop. Storage page is super clear."),
             post(2, "egot1qk2v8xw0a9m3", "Lena", "Anyone sharing space on testnet yet?"),
-            post(3, "egot1zz8y7rp4c2nd", "", "Running two desktops here, 400 GB shared."),
+            post(3, "egot1zz8y7rp4c2nd", "", "Running two desktops here, 400 GB shared.", reactions: #"[{"emoji":"🔥","count":3,"mine":true},{"emoji":"👍","count":1,"mine":false}]"#),
+            post(7, "egot1zz8y7rp4c2nd", "", "Reading the feed from Swift:\\n```swift\\nlet feed = try await client.chatFeed(viewer: me)\\nprint(feed.posts.count) // latest 200\\n```"),
+            post(8, "egot1qk2v8xw0a9m3", "Lena", "🎉🎉"),
             post(4, "egot1me00000000000", "Ari", "Same, the phone app picks it up right away 🙌", mine: true),
             post(5, "egot1me00000000000", "Ari", "Delete now removes the copies everywhere too.", mine: true),
             post(6, "egot1spam0000000xx", "", "free coins dm me", votes: 3),
@@ -181,6 +191,7 @@ enum DemoFlow {
                     .padding(12)
                 }
             }
+            .environmentObject(StorageStore())
         case "done":
             FlowSheet(icon: "arrow.up.right", title: "On its way", step: 2) {
                 SuccessBurst(title: "Sent", subtitle: "It shows as pending until the network confirms it.")
