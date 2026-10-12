@@ -21,6 +21,8 @@ struct MarketView: View {
     private var makerSide: MarketSide { takerSide == .buy ? .sell : .buy }
     private var meta: MarketAsset { MarketAssets.meta(asset) }
     private var amountMicro: UInt64? { Amount.parse(amountText).flatMap { $0 > 0 ? $0 : nil } }
+    /// The filters the offers on screen were loaded for.
+    @State private var loadedKey: String?
     private var reloadKey: String { "\(takerSide.rawValue)-\(asset)-\(fiat)-\(method)-\(amountMicro ?? 0)" }
 
     private var sideColor: Color { takerSide == .buy ? Brand.emerald : Brand.coral }
@@ -33,9 +35,10 @@ struct MarketView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         PageTitle("P2P Trade")
-                        MarketHero(params: params, egocUsd: egocUsd).reveal(0)
-                        TradeSideSwitch(side: $takerSide).reveal(0.03)
-                        filters.reveal(0.06)
+                        // No entrance animation: the tab shows straight away, like the others.
+                        MarketHero(params: params, egocUsd: egocUsd)
+                        TradeSideSwitch(side: $takerSide)
+                        filters
                         if let problem { ProblemBanner(text: problem) }
                         book
                         NoteCard(text: "The coins wait in escrow until the seller confirms the payment, and an arbiter settles disputes. To trade, open P2P Trade in Ego Desktop with the same wallet.",
@@ -48,10 +51,15 @@ struct MarketView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .task(id: reloadKey) {
-                offers = nil
-                next = nil
-                try? await Task.sleep(for: .milliseconds(250))
-                guard !Task.isCancelled else { return }
+                // Coming back to the tab keeps the offers on screen and refreshes them quietly;
+                // only a change of filter clears the list.
+                if loadedKey != reloadKey {
+                    offers = nil
+                    next = nil
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard !Task.isCancelled else { return }
+                }
+                loadedKey = reloadKey
                 await load()
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(20))
@@ -134,12 +142,11 @@ struct MarketView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
             }
-            ForEach(Array(offers.enumerated()), id: \.element.id) { i, listing in
+            ForEach(offers) { listing in
                 NavigationLink(value: OfferPage(listing: listing, egocUsd: egocUsd, mine: listing.offer.maker == app.address)) {
                     OfferRow(listing: listing, egocUsd: egocUsd, mine: listing.offer.maker == app.address)
                 }
                 .buttonStyle(.plain)
-                .reveal(min(Double(i), 6) * 0.03)
             }
             if next != nil {
                 Button(loadingMore ? "Loading…" : "Show more offers") { Task { await loadMore() } }
