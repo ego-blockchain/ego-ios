@@ -6,9 +6,6 @@ struct WalletView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sending = false
     @State private var receiving = false
-    #if DEBUG
-    @State private var debugEarnings = false
-    #endif
 
     var body: some View {
         NavigationStack {
@@ -39,8 +36,9 @@ struct WalletView: View {
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
             #if DEBUG
-            .navigationDestination(isPresented: $debugEarnings) { EarningsView() }
-            .task { debugEarnings = ProcessInfo.processInfo.arguments.contains("-openEarnings") }
+            // Screenshots only. A second way of opening pages on this stack stops the
+            // Earnings card opening more than once, so it's left out of normal launches.
+            .modifier(DebugOpenEarnings())
             #endif
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
@@ -705,3 +703,20 @@ struct WavingBuddy: View {
         }
     }
 }
+
+#if DEBUG
+/// Launch with `-openEarnings` to open Earnings from inside the tabs.
+private struct DebugOpenEarnings: ViewModifier {
+    @State private var open = false
+
+    func body(content: Content) -> some View {
+        if ProcessInfo.processInfo.arguments.contains("-openEarnings") {
+            content
+                .navigationDestination(isPresented: $open) { EarningsView() }
+                .task { open = true }
+        } else {
+            content
+        }
+    }
+}
+#endif
