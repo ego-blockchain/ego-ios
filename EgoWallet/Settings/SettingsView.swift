@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var copied = false
 
 
+    @ObservedObject private var blocklist = ChatBlocklist.shared
+
     var body: some View {
         Group {
             Form {
@@ -60,6 +62,22 @@ struct SettingsView: View {
                     Text("Network")
                 } footer: {
                     Text("Phones reach the Ego network through Ego Desktop computers that offer to act as gateways. Gateways only pass messages along. Your keys and signatures stay on this iPhone.")
+                }
+                if !blocklist.blocked.isEmpty {
+                    Section {
+                        ForEach(blocklist.blocked, id: \.self) { address in
+                            HStack {
+                                Text(shortAddress(address)).font(.system(.footnote, design: .monospaced))
+                                Spacer()
+                                Button("Unblock") { blocklist.unblock(address) }
+                                    .font(.footnote.weight(.semibold))
+                            }
+                        }
+                    } header: {
+                        Text("Blocked in chat")
+                    } footer: {
+                        Text("Their messages don't show on this iPhone.")
+                    }
                 }
                 Section {
                     Button("Lock wallet") { app.lock() }

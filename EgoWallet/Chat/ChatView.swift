@@ -8,7 +8,15 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class ChatModel: ObservableObject {
-    @Published var feed: ChatFeed?
+    /// The feed as the network sent it.
+    @Published private var fetched: ChatFeed?
+    /// What this phone shows: the feed without people blocked here.
+    var feed: ChatFeed? {
+        guard var shown = fetched else { return nil }
+        let blocklist = ChatBlocklist.shared
+        shown.posts.removeAll { blocklist.contains($0.from) }
+        return shown
+    }
     @Published var problem: String?
     @Published var sending = false
 
@@ -19,7 +27,7 @@ final class ChatModel: ObservableObject {
     func load(_ app: AppModel) async {
         let viewer = app.address
         if let chatGateway, let fresh = try? await chatGateway.chatFeed(viewer: viewer) {
-            feed = fresh
+            fetched = fresh
             problem = nil
             return
         }
@@ -32,7 +40,7 @@ final class ChatModel: ObservableObject {
                 // Nodes from before reactions and pictures leave these out.
                 if fresh.myAvatarLink != nil {
                     chatGateway = client
-                    feed = fresh
+                    fetched = fresh
                     problem = nil
                     return
                 }
@@ -43,7 +51,7 @@ final class ChatModel: ObservableObject {
         }
         if let (client, fresh) = fallback {
             chatGateway = client
-            feed = fresh
+            fetched = fresh
             problem = nil
         } else if let lastError {
             problem = app.message(for: lastError)
@@ -105,6 +113,8 @@ struct ChatView: View {
     @EnvironmentObject private var app: AppModel
     @EnvironmentObject private var storage: StorageStore
     @StateObject private var chat = ChatModel()
+    @ObservedObject private var blocklist = ChatBlocklist.shared
+    @State private var blockTarget: ChatPostView?
     @State private var draft = ""
     @FocusState private var composing: Bool
     @State private var editing: ChatPostView?
@@ -226,14 +236,30 @@ struct ChatView: View {
             // The dialogs carry their message with them: the presenting state is cleared
             // as a dialog closes, before its button's work runs.
             .confirmationDialog(
-                "Vote to remove \(voteTarget.map { $0.name.isEmpty ? shortAddress($0.from) : $0.name } ?? "")?",
+                "Report \(voteTarget.map { $0.name.isEmpty ? shortAddress($0.from) : $0.name } ?? "")?",
                 isPresented: Binding(get: { voteTarget != nil }, set: { if !$0 { voteTarget = nil } }),
                 titleVisibility: .visible,
                 presenting: voteTarget
             ) { post in
-                Button("Vote to remove", role: .destructive) { Task { await vote(post) } }
+                Button("Report", role: .destructive) { Task { await vote(post) } }
+                Button("Report and block", role: .destructive) {
+                    Task {
+                        await vote(post)
+                        blocklist.block(post.from)
+                    }
+                }
             } message: { _ in
-                Text("\(chat.feed?.threshold ?? 5) votes within \(chat.feed?.banDays ?? 14) days remove them from the chat for \(chat.feed?.banDays ?? 14) days. A vote can't be taken back.")
+                Text("For scams, abuse, vulgar language or spam. The chat has no company behind it: reports go to everyone, and \(chat.feed?.threshold ?? 5) reports within \(chat.feed?.banDays ?? 14) days remove them for \(chat.feed?.banDays ?? 14) days. A report can't be taken back.")
+            }
+            .confirmationDialog(
+                "Block \(blockTarget.map { $0.name.isEmpty ? shortAddress($0.from) : $0.name } ?? "")?",
+                isPresented: Binding(get: { blockTarget != nil }, set: { if !$0 { blockTarget = nil } }),
+                titleVisibility: .visible,
+                presenting: blockTarget
+            ) { post in
+                Button("Block", role: .destructive) { blocklist.block(post.from) }
+            } message: { _ in
+                Text("Their messages stop showing on this iPhone. They aren't told. You can unblock them in Settings.")
             }
             .confirmationDialog(
                 "Delete this message?",
@@ -312,7 +338,7 @@ struct ChatView: View {
                 .accessibilityLabel("Your chat profile")
             }
             if let feed = chat.feed {
-                Text("Anyone can read this. \(feed.threshold) removal votes in \(feed.banDays) days remove someone for \(feed.banDays) days; a second removal is for good. Tap someone's picture to see their record.")
+                Text("Anyone can read this. \(feed.threshold) reports in \(feed.banDays) days remove someone for \(feed.banDays) days; a second removal is for good. Hold a message to report or block its author.")
                     .font(.caption2)
                     .foregroundStyle(Brand.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -403,9 +429,14 @@ struct ChatView: View {
             Button(role: .destructive) {
                 voteTarget = post
             } label: {
-                Label(post.myVote ? "You voted to remove" : "Vote to remove", systemImage: "hand.raised")
+                Label(post.myVote ? "Reported" : "Report", systemImage: "exclamationmark.bubble")
             }
             .disabled(post.myVote)
+            Button(role: .destructive) {
+                blockTarget = post
+            } label: {
+                Label("Block", systemImage: "hand.raised")
+            }
         }
     }
 
@@ -419,8 +450,8 @@ struct ChatView: View {
         VStack(spacing: 6) {
             if let until = chat.feed?.myRemovedUntil {
                 Label(ChatRules.isForGood(until)
-                      ? "Community votes removed you from the chat for good, after an earlier removal."
-                      : "Community votes removed you from the chat until \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(date: .abbreviated, time: .omitted)). A second removal is for good.", systemImage: "hand.raised.fill")
+                      ? "Community reports removed you from the chat for good, after an earlier removal."
+                      : "Community reports removed you from the chat until \(Date(timeIntervalSince1970: TimeInterval(until)).formatted(date: .abbreviated, time: .omitted)). A second removal is for good.", systemImage: "hand.raised.fill")
                     .font(.footnote)
                     .foregroundStyle(Brand.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -668,7 +699,7 @@ struct ChatView: View {
 struct MemberRef: Identifiable { let id: String }
 
 /// Someone's record in the chat, opened from their picture: how long they've been around,
-/// how they take part, past removals, and a vote to remove them.
+/// how they take part, past removals, and ways to report or block them.
 struct ChatMemberView: View {
     let address: String
     @EnvironmentObject private var app: AppModel
@@ -679,6 +710,7 @@ struct ChatMemberView: View {
     @State private var confirmVote = false
     @State private var voting = false
     @State private var copied = false
+    @ObservedObject private var blocklist = ChatBlocklist.shared
 
     private var isMe: Bool { address == app.address }
 
@@ -766,7 +798,7 @@ struct ChatMemberView: View {
     private func voteCard(_ m: ChatMember) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Removal votes")
+                Text("Reports")
                     .font(.system(.subheadline, design: .rounded, weight: .bold))
                     .foregroundStyle(Brand.text)
                 Spacer()
@@ -780,28 +812,37 @@ struct ChatMemberView: View {
                 }
             }
             if m.removedForGood || m.removedUntil != nil {
-                Text("They're removed right now, so there's nothing to vote on.")
+                Text("They're removed right now, so there's nothing to report.")
                     .font(.caption).foregroundStyle(Brand.muted)
             } else if m.myVote {
-                Label("You voted to remove them", systemImage: "checkmark.circle.fill")
+                Label("You reported them", systemImage: "checkmark.circle.fill")
                     .font(.footnote.weight(.semibold)).foregroundStyle(Brand.muted)
             } else {
                 Button {
                     confirmVote = true
                 } label: {
-                    Label(voting ? "Voting…" : "Vote to remove", systemImage: "hand.raised.fill")
+                    Label(voting ? "Reporting…" : "Report", systemImage: "exclamationmark.bubble.fill")
                 }
                 .buttonStyle(OutlineButtonStyle())
                 .tint(Brand.danger)
                 .disabled(voting)
             }
+            if !isMe {
+                Button {
+                    if blocklist.contains(address) { blocklist.unblock(address) } else { blocklist.block(address) }
+                    Haptics.tap()
+                } label: {
+                    Label(blocklist.contains(address) ? "Unblock" : "Block", systemImage: "hand.raised.fill")
+                }
+                .buttonStyle(OutlineButtonStyle())
+            }
         }
         .padding(14)
         .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .confirmationDialog("Vote to remove \(m.name.isEmpty ? shortAddress(address) : m.name)?", isPresented: $confirmVote, titleVisibility: .visible) {
-            Button("Vote to remove", role: .destructive) { Task { await vote() } }
+        .confirmationDialog("Report \(m.name.isEmpty ? shortAddress(address) : m.name)?", isPresented: $confirmVote, titleVisibility: .visible) {
+            Button("Report", role: .destructive) { Task { await vote() } }
         } message: {
-            Text("Vote only for scams, abuse, vulgar language or spam. A vote can't be taken back.")
+            Text("Only for scams, abuse, vulgar language or spam. Reports go to everyone in the chat, not a company, and enough of them remove the person for a while. A report can't be taken back.")
         }
     }
 
@@ -811,9 +852,9 @@ struct ChatMemberView: View {
                 .font(.system(.subheadline, design: .rounded, weight: .bold))
                 .foregroundStyle(Brand.text)
             ForEach([
-                "Anyone in the chat can vote to remove someone, once each. No company or moderator decides.",
-                "\(m.threshold) votes within \(m.voteDays) days remove them for \(m.banDays) days, and their messages from just before disappear too.",
-                "If they come back and get \(m.threshold) votes again, they're removed for good.",
+                "Anyone in the chat can report someone, once each. No company or moderator decides, and anyone can block someone just for themselves.",
+                "\(m.threshold) reports within \(m.voteDays) days remove them for \(m.banDays) days, and their messages from just before disappear too.",
+                "If they come back and get \(m.threshold) reports again, they're removed for good.",
                 "Votes are signed by each voter's wallet, and every Ego node counts them the same way.",
             ], id: \.self) { line in
                 HStack(alignment: .top, spacing: 8) {
@@ -868,6 +909,8 @@ struct ChatProfileView: View {
     @State private var pictureItem: PhotosPickerItem?
     @State private var busy = false
     @State private var saved = false
+    @State private var confirmDelete = false
+    @State private var deleted = false
 
     var body: some View {
         GlassPage(aurora: Brand.chatAurora) {
@@ -915,6 +958,15 @@ struct ChatProfileView: View {
             }
             NoteCard(text: "Your picture is stored encrypted in your Ego Storage and shared with a link, so anyone in the chat can see it. It counts toward your storage space.",
                      icon: "lock.fill", tint: Brand.sky)
+            Button(deleted ? "Chat profile deleted" : "Delete my chat profile", role: .destructive) { confirmDelete = true }
+                .buttonStyle(GhostButtonStyle())
+                .foregroundStyle(Brand.danger)
+                .disabled(busy || deleted)
+        }
+        .confirmationDialog("Delete your chat profile?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete chat profile", role: .destructive) { Task { await deleteProfile() } }
+        } message: {
+            Text("Your name and picture are removed from the chat everywhere, and your messages from the last hour are deleted. Older messages can't be taken back on the network, so they disappear on their own within 30 days. Your wallet isn't affected.")
         }
         .navigationTitle("Chat profile")
         .navigationBarTitleDisplayMode(.inline)
@@ -961,6 +1013,35 @@ struct ChatProfileView: View {
             await setPicture(link.text)
         } catch {
             chat.problem = app.message(for: error)
+        }
+    }
+
+    /// Clears the name and picture on the network, deletes what can still be deleted (the last
+    /// hour of messages), and removes the picture file from Ego Storage. Each step is its own
+    /// signed message; a short pause keeps them under the chat's rate limit.
+    private func deleteProfile() async {
+        busy = true
+        defer { busy = false }
+        let avatar = chat.feed?.myAvatar ?? ""
+        var ok = await chat.submit(app, { key, now in .name(try ChatSigner.name(key: key, name: "", ts: now)) })
+        if ok, !avatar.isEmpty {
+            try? await Task.sleep(for: .seconds(2.5))
+            ok = await chat.submit(app, { key, now in .avatar(try ChatSigner.avatar(key: key, link: "", ts: now)) })
+            for part in ChatContent.parse(avatar) {
+                if case .media(let link) = part, let file = storage.files.first(where: { $0.cid == link.cid }) {
+                    storage.delete(file)
+                }
+            }
+        }
+        let now = Int64(Date().timeIntervalSince1970)
+        for post in chat.feed?.posts ?? [] where ok && post.mine && ChatRules.canChange(postTimestamp: post.ts, now: now) {
+            try? await Task.sleep(for: .seconds(2.5))
+            ok = await chat.submit(app, { key, now in .delete(try ChatSigner.delete(key: key, postId: post.id, postTs: post.ts, ts: now)) })
+        }
+        if ok {
+            name = ""
+            deleted = true
+            Haptics.success()
         }
     }
 

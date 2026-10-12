@@ -169,7 +169,7 @@ public struct ChatFeed: Decodable, Equatable {
     public var myAvatar: String { myAvatarLink ?? "" }
     public let threshold: Int
     public let banDays: Int
-    public let posts: [ChatPostView]
+    public var posts: [ChatPostView]
     public let oldest: Int64?
 
     enum CodingKeys: String, CodingKey {
