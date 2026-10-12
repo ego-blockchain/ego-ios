@@ -174,6 +174,7 @@ struct FlowSheet<Content: View, Footer: View>: View {
                     .padding(.bottom, 24)
                 }
                 .scrollDismissesKeyboard(.interactively)
+                .closesKeyboardOnTapOutside()
                 VStack(spacing: 10) { footer() }
                     .padding(.horizontal, 20)
                     .padding(.top, 12)
@@ -793,4 +794,53 @@ private struct RoomForBar: ViewModifier {
 extension View {
     /// Keeps an opened page's first card clear of the top bar, inside the tabs too.
     func roomForBar() -> some View { modifier(RoomForBar()) }
+}
+
+/// Closes the keyboard when a tap lands anywhere but a text field. Number pads have no
+/// return key, so otherwise there's no easy way to put them away. Watches taps on the
+/// window without taking them, so buttons and chips still work on the same tap.
+final class KeyboardCloser: NSObject, UIGestureRecognizerDelegate {
+    static let shared = KeyboardCloser()
+    /// How many views on screen want it; it stays out of the way when none do.
+    var users = 0
+    private weak var installedOn: UIWindow?
+
+    func install() {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first, window !== installedOn else { return }
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        window.addGestureRecognizer(tap)
+        installedOn = window
+    }
+
+    @objc private func tapped(_ tap: UITapGestureRecognizer) {
+        tap.view?.endEditing(true)
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard users > 0 else { return false }
+        var view = touch.view
+        while let v = view {
+            if v is UITextField || v is UITextView { return false }
+            view = v.superview
+        }
+        return true
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+}
+
+extension View {
+    /// A tap outside any text field closes the keyboard while this view is showing.
+    func closesKeyboardOnTapOutside() -> some View {
+        onAppear {
+            KeyboardCloser.shared.install()
+            KeyboardCloser.shared.users += 1
+        }
+        .onDisappear { KeyboardCloser.shared.users -= 1 }
+    }
 }

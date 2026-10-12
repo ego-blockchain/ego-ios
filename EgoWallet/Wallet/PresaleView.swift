@@ -403,17 +403,17 @@ struct PresaleView: View {
                         Image(systemName: "creditcard.fill")
                         Image(systemName: "apple.logo")
                     }
-                    .font(.system(size: 20, weight: .semibold))
-                    VStack(alignment: .leading, spacing: 1) {
+                    .font(.system(size: 16, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 0) {
                         Text(busy ? "Opening Stripe…" : "Card or Apple Pay")
-                            .font(.system(.title3, design: .rounded, weight: .heavy))
+                            .font(.system(.headline, design: .rounded, weight: .heavy))
                         Text("Visa · Mastercard · Amex")
-                            .font(.caption.weight(.medium))
+                            .font(.caption2.weight(.medium))
                             .opacity(0.6)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 16, weight: .heavy))
+                        .font(.system(size: 14, weight: .heavy))
                 }
             }
             .buttonStyle(CardPayButtonStyle())
@@ -623,10 +623,10 @@ struct CardPayButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(Brand.ink)
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 18)
             .frame(maxWidth: .infinity)
-            .frame(height: 68)
-            .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .frame(height: 56)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .shadow(color: .white.opacity(isEnabled ? 0.18 : 0), radius: 16, y: 6)
             .opacity(isEnabled ? 1 : 0.45)
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
