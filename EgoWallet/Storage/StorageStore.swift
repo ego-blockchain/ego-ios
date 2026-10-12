@@ -6,6 +6,10 @@ import UIKit
 
 /// Ego Storage on this iPhone: the plan, the sealed file library, and each
 /// file's encrypted blocks while they wait to go to the network.
+///
+/// Like iCloud, a file lives on the network once it's there: with Optimize iPhone
+/// Storage on, its blocks leave this iPhone and only the thumbnail stays. Opening it
+/// downloads it again; files kept on the iPhone, or opened in the last few days, stay.
 @MainActor
 final class StorageStore: ObservableObject {
     @Published private(set) var files: [LibraryFile] = []
@@ -20,6 +24,23 @@ final class StorageStore: ObservableObject {
     @Published private(set) var planChosen = false
     /// Why waiting files haven't gone out yet, when it isn't simply being offline.
     @Published private(set) var uploadNote: String?
+
+    /// Files coming down from the network, and how far along each is (0 to 1).
+    @Published private(set) var downloads: [String: Double] = [:]
+    /// Files whose every block is on this iPhone.
+    @Published private(set) var onDevice: Set<String> = []
+    /// Files the owner asked to keep on this iPhone.
+    @Published private(set) var kept: Set<String> = []
+    /// Free up space by keeping uploaded files on the network only. On unless turned off.
+    @Published var optimize = true {
+        didSet {
+            UserDefaults.standard.set(optimize, forKey: optimizeKey)
+            if optimize { Task { await freeUpSpace() } }
+        }
+    }
+
+    /// A downloaded file that isn't kept leaves the iPhone after this long unopened.
+    static let keepOpenedSeconds: TimeInterval = 3 * 86_400
 
     private var uploading = false
 
@@ -47,9 +68,34 @@ final class StorageStore: ObservableObject {
         files = lib.files
         library = lib
         planChosen = UserDefaults.standard.bool(forKey: planChosenKey) || !files.isEmpty
+        kept = Set(UserDefaults.standard.stringArray(forKey: keptKey) ?? [])
+        optimize = UserDefaults.standard.object(forKey: optimizeKey) as? Bool ?? true
+        scanDevice()
     }
 
     private var planChosenKey: String { "storage.planChosen.\(owner)" }
+    private var keptKey: String { "storage.kept.\(owner)" }
+    private var optimizeKey: String { "storage.optimize.\(owner)" }
+    private var openedAtKey: String { "storage.openedAt.\(owner)" }
+
+    private var openedAt: [String: Double] {
+        get { UserDefaults.standard.dictionary(forKey: openedAtKey) as? [String: Double] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: openedAtKey) }
+    }
+
+    private func blockURL(_ cid: String) -> URL { blocksDir.appendingPathComponent(cid) }
+
+    /// Notes which files are wholly on this iPhone.
+    private func scanDevice() {
+        onDevice = Set(files.filter { f in
+            f.manifest.blocks.allSatisfy { FileManager.default.fileExists(atPath: blockURL($0.blockCid).path) }
+        }.map(\.cid))
+    }
+
+    /// Bytes of files kept on this iPhone right now.
+    var onDeviceBytes: UInt64 {
+        files.filter { onDevice.contains($0.cid) }.reduce(0) { $0 + UInt64($1.size) }
+    }
 
     func chooseFree() {
         UserDefaults.standard.set(true, forKey: planChosenKey)
@@ -73,6 +119,7 @@ final class StorageStore: ObservableObject {
         if c != nil {
             await retryDeletes()
             await uploadWaiting()
+            await freeUpSpace()
         }
     }
 
@@ -149,6 +196,65 @@ final class StorageStore: ObservableObject {
         throw StorageError.missingBlock(cid)
     }
 
+    // MARK: On this iPhone
+
+    /// Brings a file's blocks down from the network, showing progress, without opening it.
+    func download(_ file: LibraryFile) async throws {
+        let missing = file.manifest.blocks.map(\.blockCid).filter { !FileManager.default.fileExists(atPath: blockURL($0).path) }
+        guard !missing.isEmpty else { onDevice.insert(file.cid); return }
+        let total = Double(file.manifest.blocks.count)
+        var have = total - Double(missing.count)
+        downloads[file.cid] = have / total
+        defer { downloads[file.cid] = nil }
+        for cid in missing {
+            _ = try await fetchBlock(cid)
+            have += 1
+            withAnimation(.easeOut(duration: 0.2)) { downloads[file.cid] = have / total }
+        }
+        onDevice.insert(file.cid)
+    }
+
+    /// Frees the space a file takes on this iPhone. It stays on the network and downloads again when opened.
+    func removeDownload(_ file: LibraryFile) {
+        guard file.state == .stored else { return }
+        for entry in file.manifest.blocks {
+            try? FileManager.default.removeItem(at: blockURL(entry.blockCid))
+        }
+        try? FileManager.default.removeItem(at: openedDir.appendingPathComponent(file.cid))
+        onDevice.remove(file.cid)
+        setKept(file, false, download: false)
+    }
+
+    /// Keeps a file on this iPhone even with Optimize iPhone Storage on, downloading it if needed.
+    func setKept(_ file: LibraryFile, _ keep: Bool, download fetch: Bool = true) {
+        if keep { kept.insert(file.cid) } else { kept.remove(file.cid) }
+        UserDefaults.standard.set(Array(kept), forKey: keptKey)
+        if keep && fetch && !onDevice.contains(file.cid) {
+            Task {
+                do { try await download(file) } catch { problem = app?.message(for: error) ?? error.localizedDescription }
+            }
+        }
+    }
+
+    /// With Optimize iPhone Storage on, lets go of uploaded files that aren't kept or recently opened,
+    /// but only those a gateway confirms the network holds.
+    func freeUpSpace() async {
+        guard optimize, let app else { return }
+        let now = Date().timeIntervalSince1970
+        let opened = openedAt
+        let candidates = files.filter {
+            $0.state == .stored && onDevice.contains($0.cid) && !kept.contains($0.cid)
+                && now - (opened[$0.cid] ?? 0) > Self.keepOpenedSeconds
+                && downloads[$0.cid] == nil
+        }
+        guard !candidates.isEmpty else { return }
+        let owner = self.owner
+        guard let held = try? await app.perform({ try await $0.storedFiles(owner: owner) }) else { return }
+        for file in candidates where held.contains(file.cid) {
+            removeDownload(file)
+        }
+    }
+
     // MARK: Plan
 
     var now: Int64 { Int64(Date().timeIntervalSince1970) }
@@ -212,6 +318,7 @@ final class StorageStore: ObservableObject {
                 entry.thumbnail = await Thumbnail.make(for: entry.kind, data: data)
                 try library?.add(entry)
                 files = library?.files ?? []
+                onDevice.insert(entry.cid)
                 Haptics.success()
             } catch {
                 problem = app?.message(for: error) ?? error.localizedDescription
@@ -223,11 +330,10 @@ final class StorageStore: ObservableObject {
 
     /// The file's contents, from the blocks kept on this iPhone, fetching any it doesn't have.
     func contents(of file: LibraryFile) async throws -> Data {
-        for entry in file.manifest.blocks where !FileManager.default.fileExists(atPath: blocksDir.appendingPathComponent(entry.blockCid).path) {
-            working = "Downloading \(file.name)…"
-            defer { working = nil }
-            _ = try await fetchBlock(entry.blockCid)
-        }
+        try await download(file)
+        var stamps = openedAt
+        stamps[file.cid] = Date().timeIntervalSince1970
+        openedAt = stamps
         let blocksDir = self.blocksDir
         return try await Task.detached(priority: .userInitiated) {
             try FileCrypto.decrypt(file.manifest, key: file.key) { cid in
@@ -277,6 +383,8 @@ final class StorageStore: ObservableObject {
         try? FileManager.default.removeItem(at: openedDir.appendingPathComponent(file.cid))
         try? library?.remove(file.cid)
         files = library?.files ?? []
+        onDevice.remove(file.cid)
+        if kept.remove(file.cid) != nil { UserDefaults.standard.set(Array(kept), forKey: keptKey) }
         Haptics.tap()
     }
 

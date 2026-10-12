@@ -395,6 +395,20 @@ struct LibraryView: View {
             }
             .font(.caption)
             .foregroundStyle(Brand.muted)
+            Divider().overlay(Color.white.opacity(0.06))
+            Toggle(isOn: $store.optimize) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Optimize iPhone Storage")
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        .foregroundStyle(Brand.text)
+                    Text(store.optimize
+                         ? "Files live on the Ego network and download when you open them. \(bytes(store.onDeviceBytes)) on this iPhone now."
+                         : "Every file also stays on this iPhone. \(bytes(store.onDeviceBytes)) on this iPhone now.")
+                        .font(.caption)
+                        .foregroundStyle(Brand.muted)
+                }
+            }
+            .tint(Brand.mint)
         }
         .card()
     }
@@ -529,6 +543,38 @@ func icon(_ kind: LibraryFile.Kind) -> String {
 func bytes(_ n: UInt64) -> String { ByteCountFormatter.string(fromByteCount: Int64(clamping: n), countStyle: .file) }
 func bytes(_ n: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file) }
 
+/// Where a file is, as a small badge: uploading, downloading, or only on the network.
+struct CloudBadge: View {
+    let file: LibraryFile
+    var onImage = true
+    @EnvironmentObject private var store: StorageStore
+
+    var body: some View {
+        Group {
+            if let progress = store.downloads[file.cid] {
+                ZStack {
+                    Circle().stroke(Color.white.opacity(0.25), lineWidth: 2.5)
+                    Circle().trim(from: 0, to: max(0.04, progress))
+                        .stroke(Brand.mint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 16, height: 16)
+                .accessibilityLabel("Downloading, \(Int(progress * 100)) percent")
+            } else if file.state == .waiting {
+                Image(systemName: "icloud.and.arrow.up").accessibilityLabel("Waiting to upload")
+            } else if !store.onDevice.contains(file.cid) {
+                Image(systemName: "icloud.and.arrow.down").accessibilityLabel("On the Ego network, tap to download")
+            } else if store.kept.contains(file.cid) {
+                Image(systemName: "arrow.down.circle.fill").accessibilityLabel("Kept on this iPhone")
+            }
+        }
+        .font(.caption2.weight(.bold))
+        .foregroundStyle(onImage ? Color.white : Brand.muted)
+        .padding(onImage ? 5 : 0)
+        .background(onImage ? Color.black.opacity(0.45) : Color.clear, in: Circle())
+    }
+}
+
 struct MediaTile: View {
     let file: LibraryFile
 
@@ -557,14 +603,7 @@ struct MediaTile: View {
                 }
             }
             .overlay(alignment: .topTrailing) {
-                if file.state == .waiting {
-                    Image(systemName: "icloud.and.arrow.up")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(5)
-                        .background(.black.opacity(0.45), in: Circle())
-                        .padding(5)
-                }
+                CloudBadge(file: file).padding(5)
             }
             .accessibilityLabel(file.name)
     }
@@ -585,9 +624,7 @@ struct DocumentRow: View {
                 Text("\(bytes(file.size)) · \(relativeTime(file.addedAt))").font(.caption).foregroundStyle(Brand.muted)
             }
             Spacer()
-            if file.state == .waiting {
-                Image(systemName: "icloud.and.arrow.up").foregroundStyle(Brand.muted)
-            }
+            CloudBadge(file: file, onImage: false)
             Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(Brand.muted.opacity(0.6))
         }
         .padding(.vertical, 10)
@@ -601,10 +638,23 @@ struct FileActions: View {
     @EnvironmentObject private var store: StorageStore
 
     var body: some View {
-        Button {
-            UIPasteboard.general.string = store.shareLink(for: file)
-            Haptics.tap()
-        } label: { Label("Copy Ego link", systemImage: "link") }
+        if file.state == .stored {
+            if store.onDevice.contains(file.cid) {
+                if !store.kept.contains(file.cid) {
+                    Button { store.setKept(file, true) } label: { Label("Keep on iPhone", systemImage: "arrow.down.circle") }
+                }
+                Button { store.removeDownload(file) } label: { Label("Remove Download", systemImage: "icloud.and.arrow.up") }
+            } else {
+                Button {
+                    Task { try? await store.download(file) }
+                } label: { Label("Download Now", systemImage: "icloud.and.arrow.down") }
+                Button { store.setKept(file, true) } label: { Label("Keep on iPhone", systemImage: "arrow.down.circle") }
+            }
+            Button {
+                UIPasteboard.general.string = store.shareLink(for: file)
+                Haptics.tap()
+            } label: { Label("Copy Ego link", systemImage: "link") }
+        }
         Button(role: .destructive) { store.delete(file) } label: { Label("Delete", systemImage: "trash") }
     }
 }
@@ -622,6 +672,7 @@ struct FileDetailView: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var copied = false
+    @State private var opening = false
 
     var body: some View {
         FlowSheet(icon: icon(file.kind), title: file.name, subtitle: "\(bytes(file.size)) · added \(relativeTime(file.addedAt))") {
@@ -629,10 +680,35 @@ struct FileDetailView: View {
             if let problem { ProblemBanner(text: problem) }
             SummaryCard(rows: [
                 .init(label: "Kind", value: file.kind.rawValue.capitalized),
-                .init(label: "Status", value: file.state == .stored ? "On the Ego network" : "On this iPhone, waiting to upload"),
+                .init(label: "Status", value: status),
                 .init(label: "Encryption", value: "AES-256-GCM, \(file.manifest.blocks.count) block\(file.manifest.blocks.count == 1 ? "" : "s")"),
                 .init(label: "Network ID", value: String(file.cid.prefix(18)) + "…", mono: true),
             ])
+            if file.state == .stored {
+                GlassField(label: "On this iPhone", icon: "iphone") {
+                    Toggle(isOn: Binding(get: { store.kept.contains(file.cid) }, set: { store.setKept(file, $0) })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Keep on this iPhone")
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                                .foregroundStyle(Brand.text)
+                            Text("Opens instantly, even offline. Otherwise it lives on the Ego network and downloads when you open it.")
+                                .font(.caption)
+                                .foregroundStyle(Brand.muted)
+                        }
+                    }
+                    .tint(Brand.mint)
+                    if store.onDevice.contains(file.cid) {
+                        Button {
+                            store.removeDownload(file)
+                            url = nil
+                            Haptics.tap()
+                        } label: {
+                            Label("Remove Download · frees \(bytes(file.size))", systemImage: "icloud.and.arrow.up")
+                        }
+                        .buttonStyle(OutlineButtonStyle())
+                    }
+                }
+            }
             NoteCard(text: "An Ego link lets anyone who has it open this file, so send it only to the person it's for.", icon: "link")
         } footer: {
             if let url {
@@ -678,9 +754,19 @@ struct FileDetailView: View {
         }
     }
 
+    private var status: String {
+        if file.state == .waiting { return "On this iPhone, waiting to upload" }
+        if store.downloads[file.cid] != nil { return "Downloading from the Ego network" }
+        return store.onDevice.contains(file.cid) ? "On the Ego network and this iPhone" : "On the Ego network"
+    }
+
     @ViewBuilder private var preview: some View {
         Button {
-            previewing = url
+            if let url {
+                previewing = url
+            } else if !opening {
+                Task { await open() }
+            }
         } label: {
             ZStack {
                 if let data = file.thumbnail, let image = UIImage(data: data) {
@@ -695,9 +781,32 @@ struct FileDetailView: View {
                     .frame(maxWidth: .infinity, minHeight: 180)
                     .background(Brand.raised)
                 }
-                if url == nil && problem == nil {
+                if let progress = store.downloads[file.cid] {
+                    VStack(spacing: 8) {
+                        ZStack {
+                            Circle().stroke(Color.white.opacity(0.2), lineWidth: 4)
+                            Circle().trim(from: 0, to: max(0.03, progress))
+                                .stroke(Brand.glow, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                                .rotationEffect(.degrees(-90))
+                            Image(systemName: "icloud.and.arrow.down").font(.system(size: 16, weight: .bold)).foregroundStyle(.white)
+                        }
+                        .frame(width: 54, height: 54)
+                        Text("Downloading \(Int(progress * 100))%")
+                            .font(.system(.caption, design: .rounded, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(16)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                } else if url == nil && opening {
                     ProgressView().tint(Brand.lime).padding(10).background(.ultraThinMaterial, in: Circle())
-                } else if url != nil {
+                } else if url == nil {
+                    Label("Tap to download", systemImage: "icloud.and.arrow.down")
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.black.opacity(0.45), in: Capsule())
+                } else {
                     Image(systemName: file.kind == .video ? "play.fill" : "eye.fill")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.white)
@@ -708,11 +817,13 @@ struct FileDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(url == nil)
-        .accessibilityLabel("Open \(file.name)")
+        .accessibilityLabel(url == nil ? "Download \(file.name)" : "Open \(file.name)")
     }
 
     private func open() async {
+        opening = true
+        problem = nil
+        defer { opening = false }
         do {
             url = try await store.openedCopy(of: file)
         } catch {

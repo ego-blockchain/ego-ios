@@ -436,6 +436,13 @@ extension GatewayClient {
         return decoded
     }
 
+    /// The files this gateway holds for `owner` on the network. Only these can safely leave the iPhone.
+    public func storedFiles(owner: String) async throws -> Set<String> {
+        struct Answer: Decodable { let files: [String]? }
+        let answer: Answer = try await call("storage.usage", ["owner": owner])
+        return Set(answer.files ?? [])
+    }
+
     /// Tells the gateway its owner no longer wants the file.
     public func deleteFile(cid: String, key: EgoKey, now: Int64 = Int64(Date().timeIntervalSince1970)) async throws {
         struct Answer: Decodable { let removed: Bool }
