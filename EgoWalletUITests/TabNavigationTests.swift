@@ -9,10 +9,11 @@ final class TabNavigationTests: XCTestCase {
 
         let card = app.buttons.containing(NSPredicate(format: "label CONTAINS 'Earnings'")).firstMatch
         XCTAssertTrue(card.waitForExistence(timeout: 20), "no Earnings card")
-        for round in 1...3 {
-            card.tap()
+        // Left edge, the empty middle, and right by the arrow.
+        for (round, x) in [0.05, 0.6, 0.95].enumerated() {
+            card.coordinate(withNormalizedOffset: CGVector(dx: x, dy: 0.5)).tap()
             let back = app.navigationBars.buttons.firstMatch
-            XCTAssertTrue(back.waitForExistence(timeout: 5), "Earnings didn't open on try \(round)")
+            XCTAssertTrue(back.waitForExistence(timeout: 5), "Earnings didn't open on try \(round) at \(x)")
             XCTAssertTrue(app.staticTexts["PAID TO THIS WALLET"].exists || app.staticTexts["Paid to this wallet"].exists,
                           "the page that opened isn't Earnings on try \(round)")
             back.tap()

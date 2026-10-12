@@ -348,9 +348,11 @@ struct EarningsCard: View {
                 Spacer()
                 Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(Brand.muted)
             }
+            .card()
+            // The whole card opens Earnings, not just the icon and words.
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(.plain)
-        .card()
         .task { chain = try? await model.rewards() }
     }
 }
