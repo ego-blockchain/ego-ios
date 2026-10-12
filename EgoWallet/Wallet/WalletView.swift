@@ -632,55 +632,41 @@ struct CoinDetailView: View {
 }
 
 
-/// A small friendly face that waves hello: on arrival, now and then, and when tapped.
+/// A friendly guide in the corner who waves hello: on arrival, now and then, and when tapped.
+/// Her raised hand is its own layer, turning at the wrist.
 struct WavingBuddy: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var wave: Double = 0
-    @State private var blink = false
+    @State private var bob = false
     @State private var greeting = false
     @State private var waving = false
 
+    /// Her wrist, where the hand turns, as a point in the picture.
+    private let wrist = UnitPoint(x: 0.175, y: 0.818)
+
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            ZStack {
-                Circle().fill(Brand.glow)
-                HStack(spacing: 7) {
-                    eye
-                    eye
-                }
-                .offset(y: -3)
-                Circle()
-                    .trim(from: 0.1, to: 0.4)
-                    .stroke(Brand.ink, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .frame(width: 14, height: 14)
-                    .offset(y: 1)
-                HStack(spacing: 15) {
-                    Circle().fill(Brand.pink.opacity(0.45)).frame(width: 5, height: 5)
-                    Circle().fill(Brand.pink.opacity(0.45)).frame(width: 5, height: 5)
-                }
-                .offset(y: 4)
-            }
-            .frame(width: 34, height: 34)
-            .shadow(color: Brand.lime.opacity(0.35), radius: 6)
-            Text("👋")
-                .font(.system(size: 15))
-                .rotationEffect(.degrees(wave), anchor: .bottomTrailing)
-                .offset(x: 7, y: 3)
+        ZStack {
+            Image("GirlBody").resizable().scaledToFit()
+            Image("GirlHand").resizable().scaledToFit()
+                .rotationEffect(.degrees(wave), anchor: wrist)
         }
+        .frame(width: 62, height: 48)
+        // The picture is cut at her waist: fade that edge rather than show a hard line.
+        .mask(LinearGradient(stops: [.init(color: .black, location: 0.72), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom))
+        .offset(y: bob ? -1.5 : 1)
         .overlay(alignment: .leading) {
             if greeting {
-                Text("Hi!")
+                Text("Hi! 👋")
                     .font(.system(.caption, design: .rounded, weight: .heavy))
                     .foregroundStyle(Brand.ink)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Brand.lime, in: Capsule())
                     .fixedSize()
-                    .offset(x: -40)
+                    .offset(x: -54)
                     .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
             }
         }
-        .frame(width: 44, height: 40)
         .contentShape(Rectangle())
         .onTapGesture {
             Haptics.tap()
@@ -695,32 +681,24 @@ struct WavingBuddy: View {
         .accessibilityAddTraits(.isButton)
         .task {
             guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: true)) { bob = true }
             try? await Task.sleep(for: .seconds(0.6))
             await waveHello()
-            var tick = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1.6))
-                tick += 1
-                withAnimation(.easeInOut(duration: 0.08)) { blink = true }
-                try? await Task.sleep(for: .seconds(0.12))
-                withAnimation(.easeInOut(duration: 0.08)) { blink = false }
-                if tick % 5 == 0 { await waveHello() }
+                try? await Task.sleep(for: .seconds(8))
+                await waveHello()
             }
         }
     }
 
-    private var eye: some View {
-        Capsule().fill(Brand.ink).frame(width: 4, height: blink ? 1 : 5)
-    }
-
-    /// Two quick waves, then back to rest.
+    /// A few turns of the hand at the wrist, then back to rest.
     private func waveHello() async {
         guard !reduceMotion, !waving else { return }
         waving = true
         defer { waving = false }
-        for angle in [-22.0, 16, -22, 16, 0] {
-            withAnimation(.easeInOut(duration: 0.16)) { wave = angle }
-            try? await Task.sleep(for: .seconds(0.16))
+        for angle in [-16.0, 12, -16, 12, -10, 0] {
+            withAnimation(.easeInOut(duration: 0.17)) { wave = angle }
+            try? await Task.sleep(for: .seconds(0.17))
         }
     }
 }

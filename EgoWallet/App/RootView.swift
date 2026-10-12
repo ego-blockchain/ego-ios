@@ -87,6 +87,8 @@ struct MainTabs: View {
         return .wallet
     }
     @State private var keyboardUp = false
+    /// The section the pager last came to rest on.
+    @State private var settled: MainTab = MainTabs.startTab
 
     /// A section picked in the tab bar; the pager scrolls to it.
     @State private var requested: MainTab?
@@ -145,7 +147,11 @@ struct MainTabs: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             withAnimation(.easeOut(duration: 0.2)) { keyboardUp = false }
         }
-        .onChange(of: shown) { _, _ in
+        .onChange(of: shown) { _, now in
+            // Only a real move to another section counts. The pager re-reports its page when its size
+            // changes, as when the keyboard opens and the tab bar hides, and that must not close the keyboard.
+            guard let now, now != settled else { return }
+            settled = now
             Haptics.tap()
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
