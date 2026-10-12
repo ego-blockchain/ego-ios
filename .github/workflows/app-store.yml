@@ -1,0 +1,58 @@
+# Builds Ego Wallet with the current Xcode and uploads it to App Store Connect.
+# Run it from the Actions tab. Needs these repository secrets, from an
+# App Store Connect API key with the Admin role:
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY (the .p8 file's contents)
+name: App Store upload
+
+on:
+  workflow_dispatch:
+
+jobs:
+  upload:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+
+      - name: API key
+        env:
+          ASC_KEY: ${{ secrets.ASC_KEY }}
+        run: |
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_KEY" > ~/private_keys/AuthKey.p8
+
+      - name: Archive
+        run: |
+          xcodegen generate -q
+          xcodebuild -project EgoWallet.xcodeproj -scheme EgoWallet -configuration Release \
+            -destination "generic/platform=iOS" -archivePath build/EgoWallet.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey.p8 \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            archive
+
+      - name: Upload
+        run: |
+          cat > build/ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+          <key>method</key><string>app-store-connect</string>
+          <key>destination</key><string>upload</string>
+          <key>teamID</key><string>L6V6UNMLXM</string>
+          <key>signingStyle</key><string>automatic</string>
+          <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath build/EgoWallet.xcarchive \
+            -exportOptionsPlist build/ExportOptions.plist -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/private_keys/AuthKey.p8 \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}"
