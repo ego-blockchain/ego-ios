@@ -121,10 +121,14 @@ struct ChatView: View {
                                 .onDisappear { atBottom = false }
                         }
                         .padding(.horizontal, 12)
+                        .padding(.top, 2)
                         .padding(.bottom, 8)
                     }
+                    .contentMargins(.top, 0, for: .scrollContent)
                     .defaultScrollAnchor(.bottom)
                     .scrollDismissesKeyboard(.interactively)
+                    // Tapping anywhere in the conversation puts the keyboard away; buttons and links still work.
+                    .simultaneousGesture(TapGesture().onEnded { dismissKeyboard() })
                     .onChange(of: chat.feed?.posts.last?.id) { old, last in
                         guard last != nil, old != last else { return }
                         // Follow new messages when already at the bottom or when they're yours.
@@ -135,8 +139,13 @@ struct ChatView: View {
                         }
                     }
                     .onChange(of: composing) { _, focused in
-                        // The keyboard takes the lower half: keep the latest message in view above it.
-                        if focused { scrollToBottom(proxy, after: 0.35) }
+                        // The keyboard takes the lower half: keep the latest message in view above it,
+                        // moving with the keyboard rather than after it.
+                        if focused && atBottom {
+                            withAnimation(.smooth(duration: 0.3)) { proxy.scrollTo(bottomID, anchor: .bottom) }
+                        } else if focused {
+                            scrollToBottom(proxy, after: 0.3)
+                        }
                     }
                     .overlay(alignment: .bottomTrailing) {
                         if !atBottom {
@@ -235,6 +244,14 @@ struct ChatView: View {
     }
 
     private func day(_ ts: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
+
+    private func dismissKeyboard() {
+        guard composing || showEmoji else { return }
+        withAnimation(.smooth(duration: 0.25)) {
+            composing = false
+            showEmoji = false
+        }
+    }
 
     /// Messages from one person within five minutes read as one run of bubbles.
     private func sameRun(_ a: ChatPostView?, _ b: ChatPostView?) -> Bool {
@@ -682,33 +699,35 @@ struct ChatIntro: View {
 
     var body: some View {
         let people = Set(feed.posts.map(\.from)).count
-        VStack(spacing: 10) {
-            Image(systemName: "bubble.left.and.text.bubble.right.fill")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 58, height: 58)
-                .background(Brand.chatGlow, in: Circle())
-                .shadow(color: Brand.violet.opacity(0.5), radius: 16)
-            Text("Everyone on Ego")
-                .font(.system(.title3, design: .rounded, weight: .heavy))
-                .foregroundStyle(Brand.text)
-            HStack(spacing: 8) {
-                pill("\(people) \(people == 1 ? "person" : "people") here", icon: "person.2.fill", tint: Brand.sky)
-                pill("Signed by each wallet", icon: "signature", tint: Brand.violet)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(Brand.chatGlow, in: Circle())
+                    .shadow(color: Brand.violet.opacity(0.5), radius: 12)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Everyone on Ego")
+                        .font(.system(.headline, design: .rounded, weight: .heavy))
+                        .foregroundStyle(Brand.text)
+                    HStack(spacing: 6) {
+                        pill("\(people) \(people == 1 ? "person" : "people")", icon: "person.2.fill", tint: Brand.sky)
+                        pill("Signed by each wallet", icon: "signature", tint: Brand.violet)
+                    }
+                }
             }
-            Text("Anyone can read this. \(feed.threshold) removal votes within \(feed.banDays) days remove someone for \(feed.banDays) days. Hold a message to copy, edit or vote.")
+            Text("Anyone can read this. \(feed.threshold) removal votes within \(feed.banDays) days remove someone for \(feed.banDays) days. Hold a message to react, copy, edit or vote.")
                 .font(.caption)
                 .foregroundStyle(Brand.muted)
-                .multilineTextAlignment(.center)
         }
-        .padding(18)
-        .frame(maxWidth: .infinity)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.ultraThinMaterial.opacity(0.45), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(LinearGradient(colors: [Brand.violet.opacity(0.5), Brand.sky.opacity(0.1)], startPoint: .top, endPoint: .bottom))
         )
-        .padding(.top, 8)
     }
 
     private func pill(_ text: String, icon: String, tint: Color) -> some View {
@@ -780,9 +799,16 @@ struct ChatBubble: View {
                 }
                 content
                     .onTapGesture(count: 2) { onReact("❤️") }
-                if !post.reactions.isEmpty {
-                    reactions
-                }
+                    // Reactions sit on the bubble's top corner away from the sender: left on yours, right on others'.
+                    .overlay(alignment: post.mine ? .topLeading : .topTrailing) {
+                        if !post.reactions.isEmpty {
+                            reactions
+                                .offset(x: post.mine ? -12 : 12, y: -16)
+                                .transition(.scale.combined(with: .opacity))
+                        }
+                    }
+                    .padding(.top, post.reactions.isEmpty ? 0 : 14)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: post.reactions)
                 footer
             }
             if !post.mine { Spacer(minLength: 48) }
@@ -820,8 +846,8 @@ struct ChatBubble: View {
     }
 
     private var reactions: some View {
-        HStack(spacing: 4) {
-            ForEach(post.reactions, id: \.emoji) { r in
+        HStack(spacing: 2) {
+            ForEach(post.reactions.prefix(4), id: \.emoji) { r in
                 Button {
                     onReact(r.emoji)
                 } label: {
@@ -834,14 +860,14 @@ struct ChatBubble: View {
                     .foregroundStyle(r.mine ? Brand.ink : Brand.text)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(r.mine ? AnyShapeStyle(Brand.chatGlow) : AnyShapeStyle(.ultraThinMaterial), in: Capsule())
-                    .overlay(Capsule().stroke(r.mine ? Color.clear : Color.white.opacity(0.12)))
+                    .background(r.mine ? AnyShapeStyle(Brand.chatGlow) : AnyShapeStyle(Brand.raised), in: Capsule())
+                    .overlay(Capsule().stroke(Brand.ink, lineWidth: 2))
+                    .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(r.emoji) \(r.count)\(r.mine ? ", yours" : "")")
             }
         }
-        .padding(.horizontal, 4)
     }
 
     @ViewBuilder private var footer: some View {
