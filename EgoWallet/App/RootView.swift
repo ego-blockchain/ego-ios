@@ -385,6 +385,9 @@ enum DemoFlow {
         return args[i + 1]
     }
 
+    /// Fills the screens with made-up content for App Store screenshots.
+    static var sample: Bool { ProcessInfo.processInfo.arguments.contains("-sample") }
+
     static var demoFeed: ChatFeed {
         let now = Int64(Date().timeIntervalSince1970)
         func post(_ id: Int, _ from: String, _ name: String, _ body: String, mine: Bool = false, votes: Int = 0, reactions: String = "[]") -> String {
@@ -393,13 +396,12 @@ enum DemoFlow {
         }
         let posts = [
             post(1, "egot1qk2v8xw0a9m3", "Lena", "Just set up a node on my old laptop. Storage page is super clear."),
-            post(2, "egot1qk2v8xw0a9m3", "Lena", "Anyone sharing space on testnet yet?"),
+            post(2, "egot1qk2v8xw0a9m3", "Lena", "Anyone else sharing space from home?"),
             post(3, "egot1zz8y7rp4c2nd", "", "Running two desktops here, 400 GB shared.", reactions: #"[{"emoji":"🔥","count":3,"mine":true},{"emoji":"👍","count":1,"mine":false}]"#),
-            post(7, "egot1zz8y7rp4c2nd", "", "Reading the feed from Swift:\\n```swift\\nlet feed = try await client.chatFeed(viewer: me)\\nprint(feed.posts.count) // latest 200\\n```"),
+            post(7, "egot1zz8y7rp4c2nd", "", "Paid for my plan in two taps 🚀"),
             post(8, "egot1qk2v8xw0a9m3", "Lena", "🎉🎉"),
             post(4, "egot1me00000000000", "Ari", "Same, the phone app picks it up right away 🙌", mine: true),
             post(5, "egot1me00000000000", "Ari", "Delete now removes the copies everywhere too.", mine: true),
-            post(6, "egot1spam0000000xx", "", "free coins dm me", votes: 3),
         ].joined(separator: ",")
         let json = #"{"me":"egot1me00000000000","my_name":"Ari","my_removed_until":null,"threshold":5,"ban_days":14,"oldest":null,"posts":[\#(posts)]}"#
         return try! JSONDecoder().decode(ChatFeed.self, from: Data(json.utf8))

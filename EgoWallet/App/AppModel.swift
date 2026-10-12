@@ -217,6 +217,12 @@ final class AppModel: ObservableObject {
     }
 
     func refresh() async {
+        #if DEBUG
+        if DemoFlow.sample {
+            fillSample()
+            return
+        }
+        #endif
         guard !address.isEmpty else { return }
         refreshing = true
         defer { refreshing = false }
@@ -603,3 +609,32 @@ final class AppModel: ObservableObject {
         return error.localizedDescription
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// Made-up wallet contents for App Store screenshots: launch with `-sample`.
+    func fillSample() {
+        let me = "egot1yr99jpx3lq7s6m5kt0dz4n8c2w9vfh3g5qvqckfx"
+        address = me
+        balance = 12_480_350_000
+        credits = 2_500
+        gatewayHost = "Ego Desktop"
+        lastUpdated = Date()
+        let now = Int64(Date().timeIntervalSince1970)
+        func item(_ n: Int, _ from: String, _ to: String, _ amount: UInt64, _ ago: Int64, _ type: String = "transfer") -> String {
+            #"{"hash":"0x\#(String(repeating: String(n), count: 64))","from":"\#(from)","to":"\#(to)","amount":\#(amount),"timestamp":\#(now - ago),"memo":null,"tx_type":"\#(type)","block_height":\#(90_000 - n),"fee_uegoc":2000}"#
+        }
+        let friend = "egot1qk2v8xw0a9m3lena7d0c4f8h2j6n0r4t8w2y6"
+        let shop = "egot1zz8y7rp4c2ndcafe3s5u7w9y1a3c5e7g9j1l3"
+        let json = "[" + [
+            item(1, friend, me, 250_000_000, 3_600),
+            item(2, me, shop, 18_500_000, 26_000),
+            item(3, "egot1rewards000000000000000000000000000000", me, 4_120_000, 90_000, "reward"),
+            item(4, me, friend, 75_000_000, 200_000),
+            item(5, friend, me, 1_000_000_000, 400_000),
+        ].joined(separator: ",") + "]"
+        history = (try? JSONDecoder().decode([HistoryItem].self, from: Data(json.utf8))) ?? []
+    }
+}
+#endif
+

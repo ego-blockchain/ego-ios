@@ -25,6 +25,12 @@ final class ChatModel: ObservableObject {
     private var chatGateway: GatewayClient?
 
     func load(_ app: AppModel) async {
+        #if DEBUG
+        if DemoFlow.sample {
+            fetched = DemoFlow.demoFeed
+            return
+        }
+        #endif
         let viewer = app.address
         if let chatGateway, let fresh = try? await chatGateway.chatFeed(viewer: viewer) {
             fetched = fresh
