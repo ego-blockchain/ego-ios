@@ -134,7 +134,7 @@ final class AppModel: ObservableObject {
         let client = try await gateway()
         do {
             return try await work(client)
-        } catch GatewayError.rpc(AppModel.notHere, let message) {
+        } catch GatewayError.rpc(let code, let message) where code == AppModel.notHere || AppModel.tooOld(code, message) {
             // An older Ego Desktop may not have this method yet. Ask other
             // gateways rather than failing, without leaving this one.
             for other in await directory.known.prefix(AppModel.notHereTries)
@@ -144,7 +144,7 @@ final class AppModel: ObservableObject {
                     return answer
                 }
             }
-            throw GatewayError.rpc(AppModel.notHere, message)
+            throw GatewayError.rpc(code, message)
         } catch GatewayError.rpc(let code, let message) {
             throw GatewayError.rpc(code, message)
         } catch {
@@ -152,6 +152,23 @@ final class AppModel: ObservableObject {
             await directory.reportFailure()
             return try await work(try await gateway())
         }
+    }
+
+    /// An older Ego Desktop refuses kinds of message it doesn't know yet, such as chat reactions.
+    static func tooOld(_ code: Int, _ message: String) -> Bool {
+        code == -32602 && message.contains("network understands")
+    }
+
+    /// Gateways to try in order: the current one first, then the others this phone knows.
+    func gatewayCandidates() async -> [GatewayClient] {
+        var out: [GatewayClient] = []
+        if let current = try? await gateway() { out.append(current) }
+        for other in await directory.known.prefix(AppModel.notHereTries) {
+            guard let g = other.announcement.gateway,
+                  !out.contains(where: { $0.gateway.endpoint == g.endpoint }) else { continue }
+            out.append(GatewayClient(gateway: g, timeout: 8))
+        }
+        return out
     }
 
     func finishSetup(with key: EgoKey) throws {

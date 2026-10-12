@@ -434,20 +434,35 @@ final class StorageStore: ObservableObject {
         return try await task.value
     }
 
+    /// Asks each gateway in turn until one has the answer: an older Ego Desktop may not know
+    /// the call, and a file may sit on one gateway before the network spreads it.
+    private func fromAnyGateway<T>(_ work: (GatewayClient) async throws -> T?) async throws -> T? {
+        guard let app else { return nil }
+        var lastError: Error?
+        for client in await app.gatewayCandidates() {
+            do {
+                if let answer = try await work(client) { return answer }
+            } catch {
+                lastError = error
+            }
+        }
+        if let lastError, AppModel.isUnreachable(lastError) { throw lastError }
+        return nil
+    }
+
     private func fetchShared(_ link: EgoShareLink) async throws -> Data {
-        guard let app else { throw ShareError.notFound }
         var manifest: StorageManifest?
-        for attempt in 0..<8 where manifest == nil {
-            manifest = try await app.perform { try await $0.getManifest(cid: link.cid) }
-            if manifest == nil { try await Task.sleep(for: .seconds(attempt < 3 ? 1 : 3)) }
+        for attempt in 0..<6 where manifest == nil {
+            manifest = try await fromAnyGateway { try await $0.getManifest(cid: link.cid) }
+            if manifest == nil { try await Task.sleep(for: .seconds(attempt < 2 ? 1 : 3)) }
         }
         guard let manifest else { throw ShareError.notFound }
         var blocks: [String: Data] = [:]
         for entry in manifest.blocks {
             var found: Data?
-            for attempt in 0..<8 where found == nil {
-                found = try await app.perform { try await $0.getBlock(cid: entry.blockCid) }
-                if found == nil { try await Task.sleep(for: .seconds(attempt < 3 ? 1 : 3)) }
+            for attempt in 0..<6 where found == nil {
+                found = try await fromAnyGateway { try await $0.getBlock(cid: entry.blockCid) }
+                if found == nil { try await Task.sleep(for: .seconds(attempt < 2 ? 1 : 3)) }
             }
             guard let data = found, StorageBlock.cid(for: data) == entry.blockCid else { throw ShareError.notFound }
             blocks[entry.blockCid] = data

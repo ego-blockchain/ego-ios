@@ -12,13 +12,41 @@ final class ChatModel: ObservableObject {
     @Published var problem: String?
     @Published var sending = false
 
+    /// The gateway this chat reads from and writes to. Keeping both on one gateway means a delete,
+    /// edit or reaction shows up straight away, and an up-to-date one understands reactions and pictures.
+    private var chatGateway: GatewayClient?
+
     func load(_ app: AppModel) async {
         let viewer = app.address
-        do {
-            feed = try await app.perform { try await $0.chatFeed(viewer: viewer) }
+        if let chatGateway, let fresh = try? await chatGateway.chatFeed(viewer: viewer) {
+            feed = fresh
             problem = nil
-        } catch {
-            problem = app.message(for: error)
+            return
+        }
+        chatGateway = nil
+        var fallback: (GatewayClient, ChatFeed)?
+        var lastError: Error?
+        for client in await app.gatewayCandidates() {
+            do {
+                let fresh = try await client.chatFeed(viewer: viewer)
+                // Nodes from before reactions and pictures leave these out.
+                if fresh.myAvatarLink != nil {
+                    chatGateway = client
+                    feed = fresh
+                    problem = nil
+                    return
+                }
+                if fallback == nil { fallback = (client, fresh) }
+            } catch {
+                lastError = error
+            }
+        }
+        if let (client, fresh) = fallback {
+            chatGateway = client
+            feed = fresh
+            problem = nil
+        } else if let lastError {
+            problem = app.message(for: lastError)
         }
     }
 
@@ -31,7 +59,18 @@ final class ChatModel: ObservableObject {
         defer { sending = false }
         do {
             let wire = try make(key, Int64(Date().timeIntervalSince1970))
-            try await app.perform { try await $0.chatSubmit(wire) }
+            if let chatGateway {
+                do {
+                    try await chatGateway.chatSubmit(wire)
+                } catch GatewayError.rpc(let code, let message) where !AppModel.tooOld(code, message) {
+                    throw GatewayError.rpc(code, message)
+                } catch {
+                    self.chatGateway = nil
+                    try await app.perform { try await $0.chatSubmit(wire) }
+                }
+            } else {
+                try await app.perform { try await $0.chatSubmit(wire) }
+            }
             await load(app)
             return true
         } catch {
