@@ -77,47 +77,75 @@ struct MainTabs: View {
     @EnvironmentObject private var app: AppModel
     /// One storage store for the whole app: Chat and Settings upload through it too.
     @StateObject private var storage = StorageStore()
-    @State private var tab: MainTab = .wallet
+    @State private var shown: MainTab? = MainTabs.startTab
+    private static var startTab: MainTab {
+        #if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-tab"), i + 1 < args.count,
+           let t = MainTab.allCases.first(where: { $0.title.lowercased() == args[i + 1] }) { return t }
+        #endif
+        return .wallet
+    }
     @State private var keyboardUp = false
 
-    var body: some View {
-        TabView(selection: $tab) {
-            WalletView().toolbar(.hidden, for: .tabBar).tag(MainTab.wallet)
-            StorageView().toolbar(.hidden, for: .tabBar).tag(MainTab.storage)
-            ChatView().toolbar(.hidden, for: .tabBar).tag(MainTab.chat)
-            MarketView().toolbar(.hidden, for: .tabBar).tag(MainTab.market)
-            SettingsView().toolbar(.hidden, for: .tabBar).tag(MainTab.settings)
+    /// A section picked in the tab bar; the pager scrolls to it.
+    @State private var requested: MainTab?
+
+    private var tab: Binding<MainTab> {
+        Binding(get: { shown ?? .wallet }, set: { requested = $0 })
+    }
+
+    @ViewBuilder private func page(_ section: MainTab) -> some View {
+        switch section {
+        case .wallet: WalletView()
+        case .storage: StorageView()
+        case .chat: ChatView()
+        case .market: MarketView()
+        case .settings: SettingsView()
         }
-        .background(Brand.ink.ignoresSafeArea())
-        // A clear sideways swipe moves to the next or previous section. Swipes that start at the
-        // left edge are left alone, so they still go back a page.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30, coordinateSpace: .global)
-                .onEnded { drag in
-                    let dx = drag.translation.width, dy = drag.translation.height
-                    let flick = drag.predictedEndTranslation.width
-                    guard drag.startLocation.x > 30, abs(dx) > 2.2 * abs(dy), abs(dx) > 90 || abs(flick) > 220 else { return }
-                    let next = tab.rawValue + (dx < 0 ? 1 : -1)
-                    if let target = MainTab(rawValue: next) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { tab = target }
+    }
+
+    var body: some View {
+        // The five sections side by side. Pages follow the finger and settle one at a time;
+        // a sideways strip inside a page (filters, coins, emoji) scrolls first.
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    ForEach(MainTab.allCases, id: \.self) { section in
+                        page(section)
+                            .containerRelativeFrame(.horizontal)
+                            .id(section)
                     }
                 }
-        )
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollPosition(id: $shown)
+            .onAppear { proxy.scrollTo(shown ?? .wallet, anchor: .leading) }
+            .onChange(of: requested) { _, next in
+                guard let next else { return }
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) { proxy.scrollTo(next, anchor: .leading) }
+                shown = next
+                requested = nil
+            }
+        }
+        .background(Brand.ink.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // Out of the way while typing, so the keyboard sits right under the message box.
             if !keyboardUp {
-                EgoTabBar(selection: $tab)
+                EgoTabBar(selection: tab)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             withAnimation(.easeOut(duration: 0.2)) { keyboardUp = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             withAnimation(.easeOut(duration: 0.2)) { keyboardUp = false }
         }
-        .onChange(of: tab) { _, _ in
+        .onChange(of: shown) { _, _ in
             Haptics.tap()
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }

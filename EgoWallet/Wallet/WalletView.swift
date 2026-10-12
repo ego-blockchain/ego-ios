@@ -34,6 +34,9 @@ struct WalletView: View {
             }
             .screenBackground()
             .navigationTitle("Wallet")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { WavingBuddy() }
+            }
             // Swipeable pages lose track of large titles, so the main pages use the compact one.
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $sending) { SendView() }
@@ -628,3 +631,96 @@ struct CoinDetailView: View {
     }
 }
 
+
+/// A small friendly face that waves hello: on arrival, now and then, and when tapped.
+struct WavingBuddy: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var wave: Double = 0
+    @State private var blink = false
+    @State private var greeting = false
+    @State private var waving = false
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            ZStack {
+                Circle().fill(Brand.glow)
+                HStack(spacing: 7) {
+                    eye
+                    eye
+                }
+                .offset(y: -3)
+                Circle()
+                    .trim(from: 0.1, to: 0.4)
+                    .stroke(Brand.ink, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .frame(width: 14, height: 14)
+                    .offset(y: 1)
+                HStack(spacing: 15) {
+                    Circle().fill(Brand.pink.opacity(0.45)).frame(width: 5, height: 5)
+                    Circle().fill(Brand.pink.opacity(0.45)).frame(width: 5, height: 5)
+                }
+                .offset(y: 4)
+            }
+            .frame(width: 34, height: 34)
+            .shadow(color: Brand.lime.opacity(0.35), radius: 6)
+            Text("👋")
+                .font(.system(size: 15))
+                .rotationEffect(.degrees(wave), anchor: .bottomTrailing)
+                .offset(x: 7, y: 3)
+        }
+        .overlay(alignment: .leading) {
+            if greeting {
+                Text("Hi!")
+                    .font(.system(.caption, design: .rounded, weight: .heavy))
+                    .foregroundStyle(Brand.ink)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Brand.lime, in: Capsule())
+                    .fixedSize()
+                    .offset(x: -40)
+                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
+            }
+        }
+        .frame(width: 44, height: 40)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            Haptics.tap()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { greeting = true }
+            Task {
+                await waveHello()
+                try? await Task.sleep(for: .seconds(1.2))
+                withAnimation(.easeOut(duration: 0.2)) { greeting = false }
+            }
+        }
+        .accessibilityLabel("Hello from Ego")
+        .accessibilityAddTraits(.isButton)
+        .task {
+            guard !reduceMotion else { return }
+            try? await Task.sleep(for: .seconds(0.6))
+            await waveHello()
+            var tick = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1.6))
+                tick += 1
+                withAnimation(.easeInOut(duration: 0.08)) { blink = true }
+                try? await Task.sleep(for: .seconds(0.12))
+                withAnimation(.easeInOut(duration: 0.08)) { blink = false }
+                if tick % 5 == 0 { await waveHello() }
+            }
+        }
+    }
+
+    private var eye: some View {
+        Capsule().fill(Brand.ink).frame(width: 4, height: blink ? 1 : 5)
+    }
+
+    /// Two quick waves, then back to rest.
+    private func waveHello() async {
+        guard !reduceMotion, !waving else { return }
+        waving = true
+        defer { waving = false }
+        for angle in [-22.0, 16, -22, 16, 0] {
+            withAnimation(.easeInOut(duration: 0.16)) { wave = angle }
+            try? await Task.sleep(for: .seconds(0.16))
+        }
+    }
+}

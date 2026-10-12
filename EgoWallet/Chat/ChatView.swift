@@ -283,7 +283,7 @@ struct ChatView: View {
                         .foregroundStyle(Brand.text)
                     if let feed = chat.feed {
                         let people = Set(feed.posts.map(\.from)).count
-                        Label("\(people) \(people == 1 ? "person" : "people") · signed by each wallet", systemImage: "signature")
+                        Label("\(people) \(people == 1 ? "person" : "people") · wallet-signed", systemImage: "signature")
                             .font(.caption)
                             .foregroundStyle(Brand.muted)
                             .lineLimit(1)
