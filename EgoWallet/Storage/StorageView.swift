@@ -18,9 +18,7 @@ struct StorageView: View {
                     PlansPage(firstTime: true)
                 }
             }
-            .navigationTitle("Storage")
-            // Swipeable pages lose track of large titles, so the main pages use the compact one.
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
         }
         .task {
             store.clearOpenedCopies()
@@ -300,6 +298,20 @@ struct LibraryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                PageTitle(title: "Storage") {
+                    Menu {
+                        Button { pickingPhotos = true } label: { Label("Photos & Videos", systemImage: "photo.on.rectangle") }
+                        Button { importing = true } label: { Label("Files", systemImage: "folder") }
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(Brand.ink)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(Brand.glow, in: Capsule())
+                    }
+                    .accessibilityLabel("Add files")
+                }
                 usageCard
                 filters
                 if let working = store.working {
@@ -328,19 +340,6 @@ struct LibraryView: View {
         }
         .refreshable { await store.refresh() }
         .background(AuroraBackground(intensity: 0.45))
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button { pickingPhotos = true } label: { Label("Photos & Videos", systemImage: "photo.on.rectangle") }
-                    Button { importing = true } label: { Label("Files", systemImage: "folder") }
-                } label: {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                        .foregroundStyle(Brand.lime)
-                }
-                .accessibilityLabel("Add files")
-            }
-        }
         .photosPicker(isPresented: $pickingPhotos, selection: $photoItems, maxSelectionCount: 20, matching: .any(of: [.images, .videos]))
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }

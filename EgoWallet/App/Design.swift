@@ -729,3 +729,34 @@ struct FlowLayout: Layout {
         return rows
     }
 }
+
+/// A section's big title at the top of its page. It's part of the page, so it scrolls away with it.
+struct PageTitle<Trailing: View>: View {
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 32, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Brand.text)
+                    .accessibilityAddTraits(.isHeader)
+                if let subtitle {
+                    Text(subtitle).font(.subheadline).foregroundStyle(Brand.muted)
+                }
+            }
+            Spacer(minLength: 0)
+            trailing()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 4)
+    }
+}
+
+extension PageTitle where Trailing == EmptyView {
+    init(_ title: String, subtitle: String? = nil) {
+        self.init(title: title, subtitle: subtitle) { EmptyView() }
+    }
+}

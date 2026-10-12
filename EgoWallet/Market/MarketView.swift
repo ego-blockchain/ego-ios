@@ -31,6 +31,7 @@ struct MarketView: View {
                 AuroraBackground(intensity: 0.6, colors: Brand.tradeAurora)
                 ScrollView {
                     VStack(spacing: 16) {
+                        PageTitle("P2P Trade")
                         MarketHero(params: params, egocUsd: egocUsd).reveal(0)
                         TradeSideSwitch(side: $takerSide).reveal(0.03)
                         filters.reveal(0.06)
@@ -44,10 +45,7 @@ struct MarketView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await load() }
             }
-            .navigationTitle("P2P Trade")
-            // Swipeable pages lose track of large titles, so the main pages use the compact one.
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbar(.hidden, for: .navigationBar)
             .task(id: reloadKey) {
                 offers = nil
                 next = nil

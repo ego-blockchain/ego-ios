@@ -12,6 +12,9 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                PageTitle("Settings")
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
                 Section {
                     NavigationLink {
                         ChatProfileView()
@@ -74,9 +77,7 @@ struct SettingsView: View {
             }
             .scrollContentBackground(.hidden)
             .screenBackground()
-            .navigationTitle("Settings")
-            // Swipeable pages lose track of large titles, so the main pages use the compact one.
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .confirmationDialog("Log out of Ego Wallet?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Log out", role: .destructive) { Task { await logOut() } }
             } message: {

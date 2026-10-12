@@ -11,6 +11,7 @@ struct WalletView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    PageTitle(title: "Wallet") { WavingBuddy() }
                     balanceCard
                     if !model.queued.isEmpty {
                         QueuedPaymentsCard()
@@ -33,12 +34,7 @@ struct WalletView: View {
                 _ = await (ego, others)
             }
             .screenBackground()
-            .navigationTitle("Wallet")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { WavingBuddy() }
-            }
-            // Swipeable pages lose track of large titles, so the main pages use the compact one.
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
             .task { await model.refresh() }
