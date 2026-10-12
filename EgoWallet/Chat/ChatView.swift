@@ -121,12 +121,9 @@ struct ChatView: View {
     @State private var member: MemberRef?
 
     private let bottomID = "chat-bottom"
-    /// Pages opened from here. Kept by hand: inside the tab pager, links that keep their own
-    /// state open once and then stop.
-    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack(path: $path) {
+        Group {
             ZStack {
                 AuroraBackground(intensity: 0.55, colors: Brand.chatAurora)
                 ScrollViewReader { proxy in
@@ -226,7 +223,6 @@ struct ChatView: View {
             .safeAreaInset(edge: .top, spacing: 0) { header }
             .safeAreaInset(edge: .bottom) { composer }
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: ProfilePage.self) { _ in ChatProfileView() }
             // The dialogs carry their message with them: the presenting state is cleared
             // as a dialog closes, before its button's work runs.
             .confirmationDialog(

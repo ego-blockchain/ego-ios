@@ -38,4 +38,40 @@ final class TabNavigationTests: XCTestCase {
             sleep(1)
         }
     }
+
+    /// Coming back to the Wallet tab shows the Wallet, and Earnings still opens.
+    func testWalletTabShowsWallet() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-demo", "tabs"]
+        app.launch()
+
+        let card = app.buttons.containing(NSPredicate(format: "label CONTAINS 'Earnings'")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 20), "no Earnings card")
+        let back = app.navigationBars.buttons.firstMatch
+        func goToTab(_ name: String) {
+            app.buttons.matching(NSPredicate(format: "label == %@", name)).allElementsBoundByIndex.last!.tap()
+            sleep(2)
+        }
+
+        // Earnings opened and closed, then away and back.
+        card.tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        back.tap()
+        sleep(1)
+        for other in ["Chat", "Settings"] {
+            goToTab(other)
+            goToTab("Wallet")
+            XCTAssertFalse(back.exists, "Earnings showed after going back, then to \(other) and Wallet")
+            XCTAssertTrue(card.isHittable, "Wallet isn't showing after \(other)")
+        }
+
+        // Still opens after the trip, and Back leaves the Wallet showing.
+        card.tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "Earnings didn't open after visiting other tabs")
+        XCTAssertFalse(app.buttons["Chat"].isHittable, "the tab bar shows over Earnings")
+        back.tap()
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        sleep(1)
+        XCTAssertFalse(back.exists, "Earnings is still showing after Back")
+    }
 }

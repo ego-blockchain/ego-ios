@@ -10,7 +10,7 @@ struct StorageView: View {
     @EnvironmentObject private var store: StorageStore
 
     var body: some View {
-        NavigationStack {
+        Group {
             Group {
                 if store.planChosen {
                     LibraryView()

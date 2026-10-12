@@ -87,6 +87,8 @@ struct MainTabs: View {
         return .wallet
     }
     @State private var keyboardUp = false
+    /// Pages open over the tabs, such as Earnings, Chat profile and market offers.
+    @State private var path = NavigationPath()
     /// The section the pager last came to rest on.
     @State private var settled: MainTab = MainTabs.startTab
 
@@ -112,20 +114,39 @@ struct MainTabs: View {
         // The five sections side by side: a swipe drags both pages and settles on one, and sideways
         // strips inside a page (filters, coins, emoji) scroll on their own first. The main pages draw
         // their own titles, so the pager's trouble with navigation bars doesn't arise.
-        TabView(selection: tab) {
-            ForEach(MainTab.allCases, id: \.self) { section in
-                page(section).tag(section)
+        // Pages open over the whole pager, tab bar included. Navigation kept inside the pager
+        // lost track of pages closed with Back, so they opened once and came back later.
+        NavigationStack(path: $path) {
+            TabView(selection: tab) {
+                ForEach(MainTab.allCases, id: \.self) { section in
+                    page(section).tag(section)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // Out of the way while typing, so the keyboard sits right under the message box.
+                if !keyboardUp {
+                    EgoTabBar(selection: tab)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: WalletPage.self) { page in
+                switch page {
+                case .earnings: EarningsView()
+                }
+            }
+            .navigationDestination(for: ProfilePage.self) { _ in ChatProfileView() }
+            .navigationDestination(for: OfferPage.self) { page in
+                OfferDetailView(listing: page.listing, egocUsd: page.egocUsd, mine: page.mine)
             }
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
+        #if DEBUG
+        .task {
+            if path.isEmpty, ProcessInfo.processInfo.arguments.contains("-openEarnings") { path.append(WalletPage.earnings) }
+        }
+        #endif
         .background(Brand.ink.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            // Out of the way while typing, so the keyboard sits right under the message box.
-            if !keyboardUp {
-                EgoTabBar(selection: tab)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             withAnimation(.easeOut(duration: 0.2)) { keyboardUp = true }
         }
@@ -395,7 +416,7 @@ enum DemoFlow {
         case "restore": NavigationStack { ImportWalletView() }
         case "lock": LockView()
         case "scene": VStack { Spacer(); ConnectionScene(); Spacer() }.background(Brand.ink)
-        case "market": MarketView()
+        case "market": NavigationStack { MarketView() }
         case "earnings": DemoPush { EarningsView() }
         case "tabs": MainTabs()
         case "filedetail":

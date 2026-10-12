@@ -7,12 +7,8 @@ struct WalletView: View {
     @State private var sending = false
     @State private var receiving = false
 
-    /// Pages opened from here. Kept by hand: inside the tab pager, links that keep their own
-    /// state open once and then stop.
-    @State private var path: [WalletPage] = []
-
     var body: some View {
-        NavigationStack(path: $path) {
+        Group {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     PageTitle(title: "Wallet") { WavingBuddy() }
@@ -39,16 +35,6 @@ struct WalletView: View {
             }
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: WalletPage.self) { page in
-                switch page {
-                case .earnings: EarningsView()
-                }
-            }
-            #if DEBUG
-            .task {
-                if path.isEmpty, ProcessInfo.processInfo.arguments.contains("-openEarnings") { path = [.earnings] }
-            }
-            #endif
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
             .task { await model.refresh() }

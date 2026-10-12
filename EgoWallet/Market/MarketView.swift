@@ -25,12 +25,9 @@ struct MarketView: View {
 
     private var sideColor: Color { takerSide == .buy ? Brand.emerald : Brand.coral }
 
-    /// Pages opened from here. Kept by hand: inside the tab pager, links that keep their own
-    /// state open once and then stop.
-    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack(path: $path) {
+        Group {
             ZStack {
                 AuroraBackground(intensity: 0.6, colors: Brand.tradeAurora)
                 ScrollView {
@@ -50,9 +47,6 @@ struct MarketView: View {
                 .refreshable { await load() }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: OfferPage.self) { page in
-                OfferDetailView(listing: page.listing, egocUsd: page.egocUsd, mine: page.mine)
-            }
             .task(id: reloadKey) {
                 offers = nil
                 next = nil

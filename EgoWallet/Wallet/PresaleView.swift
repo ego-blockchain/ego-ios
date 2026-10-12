@@ -54,7 +54,7 @@ struct PresaleCard: View {
                     }
                 }
                 HStack {
-                    Text("Pay with crypto, card or Apple Pay")
+                    Text("Pay with card, Apple Pay or crypto")
                         .font(.footnote)
                         .foregroundStyle(Brand.muted)
                     Spacer()
@@ -220,7 +220,7 @@ struct PresaleSteps: View {
     var body: some View {
         GlassField(label: "How it works", icon: "list.number") {
             ForEach(Array([
-                ("creditcard.fill", "Pay", "With BTC, ETH, BNB, SOL, ADA, TRX, USDT, a card or Apple Pay."),
+                ("creditcard.fill", "Pay", "With a card, Apple Pay, or BTC, ETH, BNB, SOL, ADA, TRX and USDT."),
                 ("doc.badge.lock", "Keep your IOU", "An encrypted proof of purchase, saved on this iPhone and in Files."),
                 ("cube.transparent.fill", "Receive at genesis", "Your EGOC is credited in the Genesis Block when mainnet launches."),
             ].enumerated()), id: \.offset) { i, step in
@@ -246,12 +246,12 @@ struct PresaleView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    enum Method: String, CaseIterable { case crypto = "Crypto", card = "Card" }
+    enum Method: String, CaseIterable { case card = "Card", crypto = "Crypto" }
 
     @State private var config: Presale.Config?
     @State private var configProblem: String?
     @State private var prices: [String: Double] = [:]
-    @State private var method = Method.crypto
+    @State private var method = Method.card
     @State private var coin = "ETH"
     @State private var payText = ""
     @State private var usdText = ""
@@ -369,9 +369,25 @@ struct PresaleView: View {
             Button {
                 startCard()
             } label: {
-                Label(busy ? "Opening Stripe…" : "Pay with card or Apple Pay", systemImage: "creditcard.fill")
+                HStack(spacing: 12) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "creditcard.fill")
+                        Image(systemName: "apple.logo")
+                    }
+                    .font(.system(size: 20, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(busy ? "Opening Stripe…" : "Card or Apple Pay")
+                            .font(.system(.title3, design: .rounded, weight: .heavy))
+                        Text("Visa · Mastercard · Amex")
+                            .font(.caption.weight(.medium))
+                            .opacity(0.6)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 16, weight: .heavy))
+                }
             }
-            .buttonStyle(OutlineButtonStyle())
+            .buttonStyle(CardPayButtonStyle())
             .disabled(config == nil || usdAmount < Presale.minimumCardUsd || busy)
             NoteCard(text: "Checkout runs on Stripe in your browser.", icon: "lock.fill")
             GlassField(label: "Already paid?", icon: "arrow.uturn.backward") {
@@ -590,4 +606,22 @@ struct OpenIOUView: View {
 
 private extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
+/// The card checkout button: large and white, set apart from the lime buttons elsewhere.
+struct CardPayButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(Brand.ink)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
+            .frame(height: 68)
+            .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: .white.opacity(isEnabled ? 0.18 : 0), radius: 16, y: 6)
+            .opacity(isEnabled ? 1 : 0.45)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
 }
