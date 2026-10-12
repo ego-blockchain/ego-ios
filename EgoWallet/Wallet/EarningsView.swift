@@ -39,8 +39,6 @@ struct EarningsView: View {
         .screenBackground()
         .navigationTitle("Earnings")
         .navigationBarTitleDisplayMode(.inline)
-        // The Wallet screen hides the bar; say so here or the page lays out under it.
-        .toolbar(.visible, for: .navigationBar)
         .task {
             while !Task.isCancelled {
                 await load()
@@ -330,9 +328,7 @@ struct EarningsCard: View {
     @State private var chain: RewardsSummary?
 
     var body: some View {
-        NavigationLink {
-            EarningsView()
-        } label: {
+        NavigationLink(value: WalletPage.earnings) {
             HStack(spacing: 12) {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 14, weight: .bold))

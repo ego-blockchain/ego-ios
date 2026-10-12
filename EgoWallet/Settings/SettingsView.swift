@@ -9,16 +9,18 @@ struct SettingsView: View {
     @State private var knownGateways = 0
     @State private var copied = false
 
+    /// Pages opened from here. Kept by hand: inside the tab pager, links that keep their own
+    /// state open once and then stop.
+    @State private var path = NavigationPath()
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Form {
                 PageTitle("Settings")
                     .listRowBackground(Color.clear)
                     .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
                 Section {
-                    NavigationLink {
-                        ChatProfileView()
-                    } label: {
+                    NavigationLink(value: ProfilePage()) {
                         HStack(spacing: 12) {
                             Image(systemName: "person.crop.circle.fill")
                                 .font(.system(size: 30))
@@ -78,6 +80,7 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: ProfilePage.self) { _ in ChatProfileView() }
             .confirmationDialog("Log out of Ego Wallet?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Log out", role: .destructive) { Task { await logOut() } }
             } message: {

@@ -121,9 +121,12 @@ struct ChatView: View {
     @State private var member: MemberRef?
 
     private let bottomID = "chat-bottom"
+    /// Pages opened from here. Kept by hand: inside the tab pager, links that keep their own
+    /// state open once and then stop.
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 AuroraBackground(intensity: 0.55, colors: Brand.chatAurora)
                 ScrollViewReader { proxy in
@@ -223,6 +226,7 @@ struct ChatView: View {
             .safeAreaInset(edge: .top, spacing: 0) { header }
             .safeAreaInset(edge: .bottom) { composer }
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: ProfilePage.self) { _ in ChatProfileView() }
             // The dialogs carry their message with them: the presenting state is cleared
             // as a dialog closes, before its button's work runs.
             .confirmationDialog(
@@ -295,9 +299,7 @@ struct ChatView: View {
                     }
                 }
                 Spacer(minLength: 4)
-                NavigationLink {
-                    ChatProfileView()
-                } label: {
+                NavigationLink(value: ProfilePage()) {
                     HStack(spacing: 6) {
                         ProfilePicture(link: chat.feed?.myAvatar ?? "", fallback: chat.feed?.myName ?? "", address: app.address, size: 26)
                         Text(chat.feed?.myName.isEmpty == false ? chat.feed?.myName ?? "" : "Profile")
@@ -1450,3 +1452,6 @@ struct ProfilePicture: View {
         return Color(hue: hue, saturation: 0.55, brightness: 0.95)
     }
 }
+
+/// Opens the chat profile from Chat or Settings.
+struct ProfilePage: Hashable {}

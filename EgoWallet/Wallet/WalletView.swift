@@ -7,8 +7,12 @@ struct WalletView: View {
     @State private var sending = false
     @State private var receiving = false
 
+    /// Pages opened from here. Kept by hand: inside the tab pager, links that keep their own
+    /// state open once and then stop.
+    @State private var path: [WalletPage] = []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     PageTitle(title: "Wallet") { WavingBuddy() }
@@ -35,10 +39,15 @@ struct WalletView: View {
             }
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: WalletPage.self) { page in
+                switch page {
+                case .earnings: EarningsView()
+                }
+            }
             #if DEBUG
-            // Screenshots only. A second way of opening pages on this stack stops the
-            // Earnings card opening more than once, so it's left out of normal launches.
-            .modifier(DebugOpenEarnings())
+            .task {
+                if path.isEmpty, ProcessInfo.processInfo.arguments.contains("-openEarnings") { path = [.earnings] }
+            }
             #endif
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
@@ -704,19 +713,7 @@ struct WavingBuddy: View {
     }
 }
 
-#if DEBUG
-/// Launch with `-openEarnings` to open Earnings from inside the tabs.
-private struct DebugOpenEarnings: ViewModifier {
-    @State private var open = false
-
-    func body(content: Content) -> some View {
-        if ProcessInfo.processInfo.arguments.contains("-openEarnings") {
-            content
-                .navigationDestination(isPresented: $open) { EarningsView() }
-                .task { open = true }
-        } else {
-            content
-        }
-    }
+/// Pages the Wallet screen opens.
+enum WalletPage: Hashable {
+    case earnings
 }
-#endif

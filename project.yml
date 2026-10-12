@@ -42,3 +42,25 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         ENABLE_PREVIEWS: YES
         DEAD_CODE_STRIPPING: YES
+  EgoWalletUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: EgoWalletUITests
+    dependencies:
+      - target: EgoWallet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.egoblockchain.wallet.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: EgoWallet
+        SWIFT_VERSION: "5.0"
+schemes:
+  EgoWallet:
+    build:
+      targets:
+        EgoWallet: all
+    test:
+      targets:
+        - EgoWalletUITests
