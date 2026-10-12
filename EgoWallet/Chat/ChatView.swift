@@ -259,6 +259,11 @@ struct ChatView: View {
             }
             .task {
                 storage.attach(app)
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-focusChat") {
+                    Task { try? await Task.sleep(for: .seconds(3)); composing = true }
+                }
+                #endif
                 while !Task.isCancelled {
                     await chat.load(app)
                     try? await Task.sleep(for: .seconds(10))

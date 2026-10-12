@@ -90,11 +90,10 @@ struct MainTabs: View {
     /// The section the pager last came to rest on.
     @State private var settled: MainTab = MainTabs.startTab
 
-    /// A section picked in the tab bar; the pager scrolls to it.
-    @State private var requested: MainTab?
-
     private var tab: Binding<MainTab> {
-        Binding(get: { shown ?? .wallet }, set: { requested = $0 })
+        Binding(get: { shown ?? .wallet }, set: { next in
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) { shown = next }
+        })
     }
 
     @ViewBuilder private func page(_ section: MainTab) -> some View {
@@ -110,29 +109,15 @@ struct MainTabs: View {
     var body: some View {
         // The five sections side by side. Pages follow the finger and settle one at a time;
         // a sideways strip inside a page (filters, coins, emoji) scrolls first.
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                HStack(spacing: 0) {
-                    ForEach(MainTab.allCases, id: \.self) { section in
-                        page(section)
-                            .containerRelativeFrame(.horizontal)
-                            .id(section)
-                    }
-                }
-                .scrollTargetLayout()
-            }
-            .scrollTargetBehavior(.paging)
-            .scrollIndicators(.hidden)
-            .scrollBounceBehavior(.basedOnSize)
-            .scrollPosition(id: $shown)
-            .onAppear { proxy.scrollTo(shown ?? .wallet, anchor: .leading) }
-            .onChange(of: requested) { _, next in
-                guard let next else { return }
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) { proxy.scrollTo(next, anchor: .leading) }
-                shown = next
-                requested = nil
+        // The five sections side by side: a swipe drags both pages and settles on one, and sideways
+        // strips inside a page (filters, coins, emoji) scroll on their own first. The main pages draw
+        // their own titles, so the pager's trouble with navigation bars doesn't arise.
+        TabView(selection: tab) {
+            ForEach(MainTab.allCases, id: \.self) { section in
+                page(section).tag(section)
             }
         }
+        .tabViewStyle(.page(indexDisplayMode: .never))
         .background(Brand.ink.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // Out of the way while typing, so the keyboard sits right under the message box.
@@ -167,6 +152,9 @@ struct MainTabs: View {
 }
 
 struct EgoTabBar: View {
+    /// Its height above the home indicator: the buttons and their padding.
+    static let height: CGFloat = 60
+
     @Binding var selection: MainTab
     @Namespace private var pill
 
