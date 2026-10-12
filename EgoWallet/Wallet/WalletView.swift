@@ -6,6 +6,9 @@ struct WalletView: View {
     @EnvironmentObject private var model: AppModel
     @State private var sending = false
     @State private var receiving = false
+    #if DEBUG
+    @State private var debugEarnings = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -35,6 +38,10 @@ struct WalletView: View {
             }
             .screenBackground()
             .toolbar(.hidden, for: .navigationBar)
+            #if DEBUG
+            .navigationDestination(isPresented: $debugEarnings) { EarningsView() }
+            .task { debugEarnings = ProcessInfo.processInfo.arguments.contains("-openEarnings") }
+            #endif
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
             .task { await model.refresh() }

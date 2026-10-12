@@ -685,6 +685,7 @@ struct GlassPage<Content: View>: View {
                     .padding(.bottom, 16)
             }
             .scrollDismissesKeyboard(.interactively)
+            .roomForBar()
         }
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar(.visible, for: .navigationBar)
@@ -762,4 +763,34 @@ extension PageTitle where Trailing == EmptyView {
     init(_ title: String, subtitle: String? = nil) {
         self.init(title: title, subtitle: subtitle) { EmptyView() }
     }
+}
+
+/// The main tabs' sideways pager doesn't pass the navigation bar's height down to pages
+/// opened from it, so their first card ends up under the bar. A page that finds its top
+/// edge only clears the status bar adds the bar's room itself.
+private struct RoomForBar: ViewModifier {
+    @State private var missing: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .top, spacing: 0) { Color.clear.frame(height: missing) }
+            .background {
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { measure(geo.safeAreaInsets.top) }
+                        .onChange(of: geo.safeAreaInsets.top) { _, top in measure(top) }
+                }
+            }
+    }
+
+    private func measure(_ top: CGFloat) {
+        let statusBar = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow?.safeAreaInsets.top }.first ?? 0
+        missing = top <= statusBar + 1 ? 44 : 0
+    }
+}
+
+extension View {
+    /// Keeps an opened page's first card clear of the top bar, inside the tabs too.
+    func roomForBar() -> some View { modifier(RoomForBar()) }
 }

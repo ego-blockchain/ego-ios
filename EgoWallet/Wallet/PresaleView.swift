@@ -92,6 +92,9 @@ struct PresaleCard: View {
                     .stroke(AngularGradient(colors: [Brand.lime, Brand.mint, Brand.violet, Brand.lime], center: .center), lineWidth: 1.2)
                     .opacity(0.7)
             )
+            // The glow reaches past the card; clipping hides it but doesn't stop it catching
+            // taps meant for the Earnings card above.
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(.plain)
         .task {

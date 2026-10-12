@@ -35,6 +35,7 @@ struct EarningsView: View {
             .padding(.top, 10)
         }
         .refreshable { await load() }
+        .roomForBar()
         .screenBackground()
         .navigationTitle("Earnings")
         .navigationBarTitleDisplayMode(.inline)
