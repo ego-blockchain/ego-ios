@@ -1,0 +1,58 @@
+# Runs the UI tests and screenshots every main screen on the newest iPhones
+# GitHub's Xcode has. Screenshots are kept as the run's "screens" artifact.
+name: New iPhones
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+          xcrun simctl list runtimes
+          xcrun simctl list devicetypes | grep -i iphone
+          brew install xcodegen
+          xcodegen generate -q
+
+      - name: Test and screenshot
+        run: |
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys; r=[x for x in json.load(sys.stdin)["runtimes"] if x["platform"]=="iOS" and x["isAvailable"]]; print(r[-1]["identifier"])')
+          echo "iOS runtime: $RUNTIME"
+          mkdir -p screens
+          FAILED=0
+          xcrun simctl list devicetypes -j | python3 -c '
+          import json,sys
+          wanted=("iPhone 18 Pro","iPhone 18 Pro Max","iPhone Duo","iPhone 17 Pro Max","iPhone Air")
+          for t in json.load(sys.stdin)["devicetypes"]:
+              if t["name"] in wanted or t["name"].startswith("iPhone Duo"):
+                  print(t["name"]+"|"+t["identifier"])
+          ' > devices.txt
+          cat devices.txt
+          while IFS='|' read -r NAME TYPE; do
+            ID=$(xcrun simctl create "$NAME" "$TYPE" "$RUNTIME")
+            echo "::group::$NAME"
+            if ! xcodebuild test -project EgoWallet.xcodeproj -scheme EgoWallet \
+                 -destination "id=$ID" -resultBundlePath "results/$NAME.xcresult" \
+                 -only-testing:EgoWalletUITests -quiet; then
+              echo "::error::UI tests failed on $NAME"
+              FAILED=1
+            fi
+            mkdir -p "screens/$NAME"
+            xcrun xcresulttool export attachments --path "results/$NAME.xcresult" --output-path "screens/$NAME" || true
+            echo "::endgroup::"
+          done < devices.txt
+          exit $FAILED
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screens
+          path: screens

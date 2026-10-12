@@ -132,8 +132,91 @@ struct ChatView: View {
 
     private let bottomID = "chat-bottom"
 
+    // Split in parts: in one expression it's too much for the compiler to type-check.
     var body: some View {
         Group {
+            dialogs(on: conversation
+                // A fixed header: the title and your profile stay put while messages scroll beneath.
+                .safeAreaInset(edge: .top, spacing: 0) { header }
+                .safeAreaInset(edge: .bottom) { composer }
+                .toolbar(.hidden, for: .navigationBar))
+            .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 1, matching: .any(of: [.images, .videos]))
+            .onChange(of: picked) { _, items in
+                guard let item = items.first else { return }
+                picked = []
+                Task { await attach(item) }
+            }
+            .quickLookPreview($viewing)
+            .sheet(item: $member, onDismiss: { Task { await chat.load(app) } }) { ref in
+                ChatMemberView(address: ref.id)
+                    .presentationDetents([.medium, .large])
+                    .presentationBackground(Brand.ink)
+            }
+            .task {
+                storage.attach(app)
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-focusChat") {
+                    Task { try? await Task.sleep(for: .seconds(3)); composing = true }
+                }
+                #endif
+                while !Task.isCancelled {
+                    await chat.load(app)
+                    try? await Task.sleep(for: .seconds(10))
+                }
+            }
+        }
+    }
+
+    private func displayName(_ post: ChatPostView?) -> String {
+        guard let post else { return "" }
+        return post.name.isEmpty ? shortAddress(post.from) : post.name
+    }
+
+    // The dialogs carry their message with them: the presenting state is cleared
+    // as a dialog closes, before its button's work runs.
+    private func dialogs<Content: View>(on content: Content) -> some View {
+        let threshold = chat.feed?.threshold ?? 5
+        let banDays = chat.feed?.banDays ?? 14
+        return content
+            .confirmationDialog(
+                "Report \(displayName(voteTarget))?",
+                isPresented: Binding(get: { voteTarget != nil }, set: { if !$0 { voteTarget = nil } }),
+                titleVisibility: .visible,
+                presenting: voteTarget
+            ) { post in
+                Button("Report", role: .destructive) { Task { await vote(post) } }
+                Button("Report and block", role: .destructive) {
+                    Task {
+                        await vote(post)
+                        blocklist.block(post.from)
+                    }
+                }
+            } message: { _ in
+                Text("For scams, abuse, vulgar language or spam. The chat has no company behind it: reports go to everyone, and \(threshold) reports within \(banDays) days remove them for \(banDays) days. A report can't be taken back.")
+            }
+            .confirmationDialog(
+                "Block \(displayName(blockTarget))?",
+                isPresented: Binding(get: { blockTarget != nil }, set: { if !$0 { blockTarget = nil } }),
+                titleVisibility: .visible,
+                presenting: blockTarget
+            ) { post in
+                Button("Block", role: .destructive) { blocklist.block(post.from) }
+            } message: { _ in
+                Text("Their messages stop showing on this iPhone. They aren't told. You can unblock them in Settings.")
+            }
+            .confirmationDialog(
+                "Delete this message?",
+                isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+                titleVisibility: .visible,
+                presenting: deleteTarget
+            ) { post in
+                Button("Delete for everyone", role: .destructive) { Task { await delete(post) } }
+            } message: { _ in
+                Text("It disappears for everyone, along with any photo or video you shared in it.")
+            }
+    }
+
+    private var conversation: some View {
             ZStack {
                 AuroraBackground(intensity: 0.55, colors: Brand.chatAurora)
                 ScrollViewReader { proxy in
@@ -229,73 +312,6 @@ struct ChatView: View {
                     .animation(.spring(response: 0.3), value: atBottom)
                 }
             }
-            // A fixed header: the title and your profile stay put while messages scroll beneath.
-            .safeAreaInset(edge: .top, spacing: 0) { header }
-            .safeAreaInset(edge: .bottom) { composer }
-            .toolbar(.hidden, for: .navigationBar)
-            // The dialogs carry their message with them: the presenting state is cleared
-            // as a dialog closes, before its button's work runs.
-            .confirmationDialog(
-                "Report \(voteTarget.map { $0.name.isEmpty ? shortAddress($0.from) : $0.name } ?? "")?",
-                isPresented: Binding(get: { voteTarget != nil }, set: { if !$0 { voteTarget = nil } }),
-                titleVisibility: .visible,
-                presenting: voteTarget
-            ) { post in
-                Button("Report", role: .destructive) { Task { await vote(post) } }
-                Button("Report and block", role: .destructive) {
-                    Task {
-                        await vote(post)
-                        blocklist.block(post.from)
-                    }
-                }
-            } message: { _ in
-                Text("For scams, abuse, vulgar language or spam. The chat has no company behind it: reports go to everyone, and \(chat.feed?.threshold ?? 5) reports within \(chat.feed?.banDays ?? 14) days remove them for \(chat.feed?.banDays ?? 14) days. A report can't be taken back.")
-            }
-            .confirmationDialog(
-                "Block \(blockTarget.map { $0.name.isEmpty ? shortAddress($0.from) : $0.name } ?? "")?",
-                isPresented: Binding(get: { blockTarget != nil }, set: { if !$0 { blockTarget = nil } }),
-                titleVisibility: .visible,
-                presenting: blockTarget
-            ) { post in
-                Button("Block", role: .destructive) { blocklist.block(post.from) }
-            } message: { _ in
-                Text("Their messages stop showing on this iPhone. They aren't told. You can unblock them in Settings.")
-            }
-            .confirmationDialog(
-                "Delete this message?",
-                isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
-                titleVisibility: .visible,
-                presenting: deleteTarget
-            ) { post in
-                Button("Delete for everyone", role: .destructive) { Task { await delete(post) } }
-            } message: { _ in
-                Text("It disappears for everyone, along with any photo or video you shared in it.")
-            }
-            .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 1, matching: .any(of: [.images, .videos]))
-            .onChange(of: picked) { _, items in
-                guard let item = items.first else { return }
-                picked = []
-                Task { await attach(item) }
-            }
-            .quickLookPreview($viewing)
-            .sheet(item: $member, onDismiss: { Task { await chat.load(app) } }) { ref in
-                ChatMemberView(address: ref.id)
-                    .presentationDetents([.medium, .large])
-                    .presentationBackground(Brand.ink)
-            }
-            .task {
-                storage.attach(app)
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("-focusChat") {
-                    Task { try? await Task.sleep(for: .seconds(3)); composing = true }
-                }
-                #endif
-                while !Task.isCancelled {
-                    await chat.load(app)
-                    try? await Task.sleep(for: .seconds(10))
-                }
-            }
-        }
     }
 
     /// Fixed at the top: what this chat is, its rules, and your profile. Messages scroll beneath it.
