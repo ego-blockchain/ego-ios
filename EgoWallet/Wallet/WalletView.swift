@@ -17,7 +17,9 @@ struct WalletView: View {
                         QueuedPaymentsCard()
                     }
                     EarningsCard()
+                    #if !APP_STORE
                     PresaleCard()
+                    #endif
                     EGUSDCard()
                     ShieldedCard()
                     OtherCoinsCard()

@@ -42,3 +42,28 @@ final class ShieldedPresaleTests: XCTestCase {
         XCTAssertEqual(EgoAddress.address(publicKey: key.publicKey, chainId: 1, hrp: "egot"), key.address)
     }
 }
+
+final class PresaleIOUFileTests: XCTestCase {
+    private func iouFile(coin: String, deposit: String) throws -> URL {
+        let json: [String: Any] = [
+            "ego_presale": true, "id": "test", "issued_at": 0,
+            "allocation": ["egoc_amount": 100, "usd_value": 1],
+            "payment": ["coin": coin, "deposit_address": deposit, "amount": 0.01],
+        ]
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).json")
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        return url
+    }
+
+    func testOwnTreasuryKeepsItsPayAddress() throws {
+        let iou = try XCTUnwrap(PresaleIOU(file: try iouFile(coin: "ETH", deposit: "0xD4f2B1fA44668B806290A4c3CB758ABb7EF35C64")))
+        XCTAssertEqual(iou.depositAddress, "0xD4f2B1fA44668B806290A4c3CB758ABb7EF35C64")
+    }
+
+    func testSwappedAddressGetsNoPayButton() throws {
+        let iou = try XCTUnwrap(PresaleIOU(file: try iouFile(coin: "ETH", deposit: "0x000000000000000000000000000000000000dEaD")))
+        XCTAssertNil(iou.depositAddress)
+        let other = try XCTUnwrap(PresaleIOU(file: try iouFile(coin: "BTC", deposit: "0xD4f2B1fA44668B806290A4c3CB758ABb7EF35C64")))
+        XCTAssertNil(other.depositAddress, "an ETH treasury on a BTC IOU")
+    }
+}

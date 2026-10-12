@@ -399,11 +399,9 @@ struct PresaleView: View {
                 startCard()
             } label: {
                 HStack(spacing: 12) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "creditcard.fill")
-                        Image(systemName: "apple.logo")
-                    }
-                    .font(.system(size: 16, weight: .semibold))
+                    // Apple's logo is only allowed on Apple's own Apple Pay button.
+                    Image(systemName: "creditcard.fill")
+                        .font(.system(size: 18, weight: .semibold))
                     VStack(alignment: .leading, spacing: 0) {
                         Text(busy ? "Opening Stripe…" : "Card or Apple Pay")
                             .font(.system(.headline, design: .rounded, weight: .heavy))

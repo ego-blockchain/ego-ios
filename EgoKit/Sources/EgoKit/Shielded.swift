@@ -69,6 +69,7 @@ public enum Shielded {
             let page = try await client.shieldedLeaves(from: leaves.count)
             leaves += page.leaves
             fee = page.feeUegoc
+            guard fee <= NonceInfo.maxFeeUegoc else { throw GatewayError.feeTooHigh(fee) }
             if page.leaves.isEmpty || leaves.count >= page.nextIndex { break }
         }
         return Pool(leaves: leaves, feeUegoc: fee)

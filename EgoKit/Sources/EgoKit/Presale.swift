@@ -15,6 +15,20 @@ public enum Presale {
     public static let coins = ["BTC", "ETH", "BNB", "SOL", "ADA", "TRX", "USDT"]
     public static let minimumCardUsd = 10.0
 
+    /// The Ego team's treasury for each payment coin, the same table as `deposit_address`
+    /// in ego-wallet-core's presale.rs. An IOU file pointing anywhere else isn't one the app
+    /// made, so it gets no pay button.
+    public static func depositAddress(for coin: String) -> String? {
+        switch coin {
+        case "BTC": return "bc1qaqx0xf9sv0ktmtcxlzzh7t7kf59nwu8c0vlqhg"
+        case "ETH", "USDT", "USDC", "BNB": return "0xD4f2B1fA44668B806290A4c3CB758ABb7EF35C64"
+        case "ADA": return "addr1qyp35j52jw8tmg85wvll3p5krsgkpttxa65kxav4mc56g73fmcra587acj9n8zsqm8u55zvumpff3mrkt9865jswu4gql452dd"
+        case "SOL": return "9PZzHQYohiR9fTKTJXUaRYKv6doM4NQPJZKcrVvTJbbW"
+        case "TRX": return "TSZnnQGN8idN6vEU66NX1ek1AtwmHbYLRx"
+        default: return nil
+        }
+    }
+
     public struct Config: Equatable, Sendable {
         public let priceUsd: Double
         public let launchUsd: Double
@@ -220,7 +234,9 @@ public struct PresaleIOU: Identifiable, Equatable, Sendable {
         usdValue = (allocation["usd_value"] as? NSNumber)?.doubleValue ?? 0
         payCoin = pay["coin"] as? String
         payAmount = (pay["amount"] as? NSNumber)?.doubleValue
-        depositAddress = pay["deposit_address"] as? String
+        // Files in this folder can be swapped through the Files app: trust only our own treasury.
+        let listed = pay["deposit_address"] as? String
+        depositAddress = listed != nil && listed == payCoin.flatMap(Presale.depositAddress(for:)) ? listed : nil
         payment = pay["method"] as? String == "stripe" ? "Card (Stripe)" : "\(payAmount.map { String($0) } ?? "") \(payCoin ?? "")"
     }
 

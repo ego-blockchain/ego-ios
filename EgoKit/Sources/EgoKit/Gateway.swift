@@ -30,9 +30,13 @@ public enum GatewayError: Error, Equatable, LocalizedError {
     case http(Int)
     case rpc(Int, String)
     case badResponse
+    /// A gateway asked for more than any real fee: refused before anything is signed.
+    case feeTooHigh(UInt64)
 
     public var errorDescription: String? {
         switch self {
+        case .feeTooHigh(let fee):
+            return "The gateway asked for a network fee of \(Double(fee) / 1_000_000) EGOC, far above normal, so nothing was sent."
         case .unreachable(let why): return "Couldn't reach the Ego network: \(why)"
         case .http(let code): return "The gateway answered with HTTP \(code)."
         case .rpc(_, let message): return message
@@ -46,6 +50,10 @@ public struct Balance: Decodable, Equatable {
 }
 
 public struct NonceInfo: Decodable, Equatable {
+    /// The chain's own fee ceiling (5 EGOC). Real fees run 0.001 to 0.01 EGOC, so a gateway
+    /// asking more is wrong or hostile, such as a fake gateway on the same Wi-Fi.
+    public static let maxFeeUegoc: UInt64 = 5_000_000
+
     public let lastConfirmed: UInt64
     public let next: UInt64
     public let feeUegoc: UInt64
@@ -278,7 +286,9 @@ public final class GatewayClient {
     }
 
     public func nonce(of address: String) async throws -> NonceInfo {
-        try await call("wallet.getNonce", ["address": address])
+        let info: NonceInfo = try await call("wallet.getNonce", ["address": address])
+        guard info.feeUegoc <= NonceInfo.maxFeeUegoc else { throw GatewayError.feeTooHigh(info.feeUegoc) }
+        return info
     }
 
     public func history(of address: String, limit: Int = 50) async throws -> [HistoryItem] {
