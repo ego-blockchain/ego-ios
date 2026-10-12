@@ -218,51 +218,30 @@ struct ChatView: View {
                     .animation(.spring(response: 0.3), value: atBottom)
                 }
             }
-            .safeAreaInset(edge: .top) {
-                if let problem = chat.problem {
-                    ProblemBanner(text: problem).padding(.horizontal, 12).padding(.top, 4)
-                }
-            }
+            // A fixed header: the title and your profile stay put while messages scroll beneath.
+            .safeAreaInset(edge: .top, spacing: 0) { header }
             .safeAreaInset(edge: .bottom) { composer }
-            .navigationTitle("Community chat")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        ChatProfileView()
-                    } label: {
-                        HStack(spacing: 6) {
-                            ProfilePicture(link: chat.feed?.myAvatar ?? "", fallback: chat.feed?.myName ?? "", address: app.address, size: 24)
-                            Text(chat.feed?.myName.isEmpty == false ? chat.feed?.myName ?? "" : "Profile")
-                                .font(.system(.footnote, design: .rounded, weight: .bold))
-                                .foregroundStyle(Brand.text)
-                        }
-                        .padding(.leading, 3)
-                        .padding(.trailing, 10)
-                        .padding(.vertical, 3)
-                        .background(Brand.violet.opacity(0.25), in: Capsule())
-                        .overlay(Capsule().stroke(Brand.violet.opacity(0.5)))
-                    }
-                    .accessibilityLabel("Your chat profile")
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
+            // The dialogs carry their message with them: the presenting state is cleared
+            // as a dialog closes, before its button's work runs.
             .confirmationDialog(
                 "Vote to remove \(voteTarget.map { $0.name.isEmpty ? shortAddress($0.from) : $0.name } ?? "")?",
                 isPresented: Binding(get: { voteTarget != nil }, set: { if !$0 { voteTarget = nil } }),
-                titleVisibility: .visible
-            ) {
-                Button("Vote to remove", role: .destructive) { Task { await vote() } }
-            } message: {
+                titleVisibility: .visible,
+                presenting: voteTarget
+            ) { post in
+                Button("Vote to remove", role: .destructive) { Task { await vote(post) } }
+            } message: { _ in
                 Text("\(chat.feed?.threshold ?? 5) votes within \(chat.feed?.banDays ?? 14) days remove them from the chat for \(chat.feed?.banDays ?? 14) days. A vote can't be taken back.")
             }
             .confirmationDialog(
                 "Delete this message?",
                 isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
-                titleVisibility: .visible
-            ) {
-                Button("Delete for everyone", role: .destructive) { Task { await delete() } }
-            } message: {
+                titleVisibility: .visible,
+                presenting: deleteTarget
+            ) { post in
+                Button("Delete for everyone", role: .destructive) { Task { await delete(post) } }
+            } message: { _ in
                 Text("It disappears for everyone, along with any photo or video you shared in it.")
             }
             .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 1, matching: .any(of: [.images, .videos]))
@@ -280,6 +259,49 @@ struct ChatView: View {
                 }
             }
         }
+    }
+
+    private var header: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Community chat")
+                        .font(.system(.headline, design: .rounded, weight: .heavy))
+                        .foregroundStyle(Brand.text)
+                    if let feed = chat.feed {
+                        let people = Set(feed.posts.map(\.from)).count
+                        Text("\(people) \(people == 1 ? "person" : "people") · everyone on Ego")
+                            .font(.caption)
+                            .foregroundStyle(Brand.muted)
+                    }
+                }
+                Spacer()
+                NavigationLink {
+                    ChatProfileView()
+                } label: {
+                    HStack(spacing: 6) {
+                        ProfilePicture(link: chat.feed?.myAvatar ?? "", fallback: chat.feed?.myName ?? "", address: app.address, size: 26)
+                        Text(chat.feed?.myName.isEmpty == false ? chat.feed?.myName ?? "" : "Profile")
+                            .font(.system(.footnote, design: .rounded, weight: .bold))
+                            .foregroundStyle(Brand.text)
+                            .lineLimit(1)
+                    }
+                    .padding(.leading, 3)
+                    .padding(.trailing, 10)
+                    .padding(.vertical, 3)
+                    .background(Brand.violet.opacity(0.25), in: Capsule())
+                    .overlay(Capsule().stroke(Brand.violet.opacity(0.5)))
+                }
+                .accessibilityLabel("Your chat profile")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            if let problem = chat.problem {
+                ProblemBanner(text: problem).padding(.horizontal, 12).padding(.bottom, 8)
+            }
+        }
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1) }
     }
 
     private func day(_ ts: Int64) -> Date { Date(timeIntervalSince1970: TimeInterval(ts)) }
@@ -597,9 +619,7 @@ struct ChatView: View {
         }
     }
 
-    private func delete() async {
-        guard let post = deleteTarget else { return }
-        deleteTarget = nil
+    private func delete(_ post: ChatPostView) async {
         if await chat.submit(app, { key, now in .delete(try ChatSigner.delete(key: key, postId: post.id, postTs: post.ts, ts: now)) }) {
             // A photo or video shared in it goes too.
             for part in ChatContent.parse(post.body) {
@@ -610,9 +630,7 @@ struct ChatView: View {
         }
     }
 
-    private func vote() async {
-        guard let post = voteTarget else { return }
-        voteTarget = nil
+    private func vote(_ post: ChatPostView) async {
         _ = await chat.submit(app, { key, now in .vote(try ChatSigner.vote(key: key, target: post.from, ts: now)) })
     }
 }
