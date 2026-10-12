@@ -37,23 +37,89 @@ struct RootView: View {
     }
 }
 
+enum MainTab: Int, CaseIterable {
+    case wallet, storage, chat, market, settings
+
+    var title: String {
+        switch self {
+        case .wallet: "Wallet"
+        case .storage: "Storage"
+        case .chat: "Chat"
+        case .market: "Market"
+        case .settings: "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .wallet: "wallet.pass.fill"
+        case .storage: "externaldrive.fill.badge.icloud"
+        case .chat: "bubble.left.and.bubble.right.fill"
+        case .market: "arrow.left.arrow.right.circle.fill"
+        case .settings: "gearshape.fill"
+        }
+    }
+
+    /// Each section's own colour, as its pages use.
+    var tint: Color {
+        switch self {
+        case .wallet: Brand.lime
+        case .storage: Brand.mint
+        case .chat: Brand.violet
+        case .market: Brand.amber
+        case .settings: Brand.sky
+        }
+    }
+}
+
+/// The five sections, side by side: swipe left or right to move between them, or tap the bar.
 struct MainTabs: View {
     @EnvironmentObject private var app: AppModel
     /// One storage store for the whole app: Chat and Settings upload through it too.
     @StateObject private var storage = StorageStore()
+    @State private var tab: MainTab = .wallet
+    @State private var keyboardUp = false
 
     var body: some View {
-        TabView {
-            WalletView()
-                .tabItem { Label("Wallet", systemImage: "wallet.pass") }
-            StorageView()
-                .tabItem { Label("Storage", systemImage: "externaldrive.connected.to.line.below") }
-            ChatView()
-                .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
-            MarketView()
-                .tabItem { Label("Market", systemImage: "arrow.left.arrow.right.circle") }
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
+        TabView(selection: $tab) {
+            WalletView().toolbar(.hidden, for: .tabBar).tag(MainTab.wallet)
+            StorageView().toolbar(.hidden, for: .tabBar).tag(MainTab.storage)
+            ChatView().toolbar(.hidden, for: .tabBar).tag(MainTab.chat)
+            MarketView().toolbar(.hidden, for: .tabBar).tag(MainTab.market)
+            SettingsView().toolbar(.hidden, for: .tabBar).tag(MainTab.settings)
+        }
+        .background(Brand.ink.ignoresSafeArea())
+        // A clear sideways swipe moves to the next or previous section. Swipes that start at the
+        // left edge are left alone, so they still go back a page.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30, coordinateSpace: .global)
+                .onEnded { drag in
+                    let dx = drag.translation.width, dy = drag.translation.height
+                    let flick = drag.predictedEndTranslation.width
+                    guard drag.startLocation.x > 30, abs(dx) > 2.2 * abs(dy), abs(dx) > 90 || abs(flick) > 220 else { return }
+                    let next = tab.rawValue + (dx < 0 ? 1 : -1)
+                    if let target = MainTab(rawValue: next) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { tab = target }
+                    }
+                }
+        )
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // Out of the way while typing, so the keyboard sits right under the message box.
+            if !keyboardUp {
+                EgoTabBar(selection: $tab)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) { keyboardUp = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            withAnimation(.easeOut(duration: 0.2)) { keyboardUp = false }
+        }
+        .onChange(of: tab) { _, _ in
+            Haptics.tap()
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
         .environmentObject(storage)
         .onAppear { storage.attach(app) }
@@ -63,6 +129,49 @@ struct MainTabs: View {
             await storage.refresh()
         }
         .onChange(of: app.phase) { _, _ in storage.attach(app) }
+    }
+}
+
+struct EgoTabBar: View {
+    @Binding var selection: MainTab
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(MainTab.allCases, id: \.self) { tab in
+                let on = tab == selection
+                Button {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { selection = tab }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 18, weight: .semibold))
+                            .symbolEffect(.bounce, value: on)
+                        Text(tab.title)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                    }
+                    .foregroundStyle(on ? tab.tint : Brand.muted)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background {
+                        if on {
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(tab.tint.opacity(0.14))
+                                .matchedGeometryEffect(id: "tab", in: pill)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab.title)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(5)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(0.08)))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 2)
     }
 }
 
@@ -176,6 +285,7 @@ enum DemoFlow {
         case "presalecard": VStack { PresaleCard(); Spacer() }.padding(16).screenBackground()
         case "restore": NavigationStack { ImportWalletView() }
         case "market": MarketView()
+        case "tabs": MainTabs()
         case "filedetail":
             FileDetailView(file: LibraryFile(file: try! FileCrypto.encrypt(Data(repeating: 7, count: 300_000)), name: "Beach trip.pdf"))
                 .environmentObject(StorageStore())

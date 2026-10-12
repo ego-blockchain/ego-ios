@@ -75,6 +75,8 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .screenBackground()
             .navigationTitle("Settings")
+            // Swipeable pages lose track of large titles, so the main pages use the compact one.
+            .navigationBarTitleDisplayMode(.inline)
             .confirmationDialog("Log out of Ego Wallet?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Log out", role: .destructive) { Task { await logOut() } }
             } message: {

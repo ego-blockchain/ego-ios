@@ -19,6 +19,8 @@ struct StorageView: View {
                 }
             }
             .navigationTitle("Storage")
+            // Swipeable pages lose track of large titles, so the main pages use the compact one.
+            .navigationBarTitleDisplayMode(.inline)
         }
         .task {
             store.clearOpenedCopies()

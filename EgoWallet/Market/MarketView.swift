@@ -45,6 +45,8 @@ struct MarketView: View {
                 .refreshable { await load() }
             }
             .navigationTitle("P2P Trade")
+            // Swipeable pages lose track of large titles, so the main pages use the compact one.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
             .task(id: reloadKey) {
                 offers = nil

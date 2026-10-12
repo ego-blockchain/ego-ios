@@ -34,6 +34,8 @@ struct WalletView: View {
             }
             .screenBackground()
             .navigationTitle("Wallet")
+            // Swipeable pages lose track of large titles, so the main pages use the compact one.
+            .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
             .task { await model.refresh() }
