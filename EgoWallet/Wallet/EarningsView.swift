@@ -38,6 +38,8 @@ struct EarningsView: View {
         .screenBackground()
         .navigationTitle("Earnings")
         .navigationBarTitleDisplayMode(.inline)
+        // The Wallet screen hides the bar; say so here or the page lays out under it.
+        .toolbar(.visible, for: .navigationBar)
         .task {
             while !Task.isCancelled {
                 await load()

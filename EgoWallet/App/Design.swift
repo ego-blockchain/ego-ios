@@ -687,6 +687,7 @@ struct GlassPage<Content: View>: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar(.visible, for: .navigationBar)
     }
 }
 

@@ -396,6 +396,7 @@ enum DemoFlow {
         case "lock": LockView()
         case "scene": VStack { Spacer(); ConnectionScene(); Spacer() }.background(Brand.ink)
         case "market": MarketView()
+        case "earnings": DemoPush { EarningsView() }
         case "tabs": MainTabs()
         case "filedetail":
             FileDetailView(file: LibraryFile(file: try! FileCrypto.encrypt(Data(repeating: 7, count: 300_000)), name: "Beach trip.pdf"))
@@ -430,3 +431,18 @@ enum DemoFlow {
     }
 }
 #endif
+
+/// Opens a page the way the tabs do: from a root with the bar hidden.
+struct DemoPush<Page: View>: View {
+    @ViewBuilder var page: () -> Page
+    @State private var pushed = false
+
+    var body: some View {
+        NavigationStack {
+            Color.clear.screenBackground()
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(isPresented: $pushed) { page() }
+                .task { pushed = true }
+        }
+    }
+}
