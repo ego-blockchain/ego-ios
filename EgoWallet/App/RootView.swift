@@ -161,6 +161,9 @@ enum DemoFlow {
         case "presalecard": VStack { PresaleCard(); Spacer() }.padding(16).screenBackground()
         case "restore": NavigationStack { ImportWalletView() }
         case "market": MarketView()
+        case "filedetail":
+            FileDetailView(file: LibraryFile(file: try! FileCrypto.encrypt(Data(repeating: 7, count: 300_000)), name: "Beach trip.pdf"))
+                .environmentObject(StorageStore())
         case "planssheet": NavigationStack { PlansPage(firstTime: false) }.environmentObject(StorageStore())
         case "chat":
             ZStack {

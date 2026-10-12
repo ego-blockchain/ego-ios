@@ -635,39 +635,29 @@ struct FileDetailView: View {
             ])
             NoteCard(text: "An Ego link lets anyone who has it open this file, so send it only to the person it's for.", icon: "link")
         } footer: {
-            HStack(spacing: 10) {
-                if let url {
-                    SwiftUI.ShareLink(item: url) { Label("Send", systemImage: "paperplane.fill") }
-                        .buttonStyle(GlowButtonStyle())
-                } else {
-                    Button {} label: { Label("Send", systemImage: "paperplane.fill") }
-                        .buttonStyle(GlowButtonStyle()).disabled(true)
-                }
-                Button {
-                    UIPasteboard.general.string = store.shareLink(for: file)
-                    copied = true
-                    Haptics.tap()
-                } label: {
-                    Image(systemName: copied ? "checkmark" : "link")
-                        .font(.headline)
-                        .frame(width: 56, height: 56)
-                        .background(Brand.raised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .foregroundStyle(Brand.lime)
-                }
-                .accessibilityLabel("Copy Ego link")
+            if let url {
+                SwiftUI.ShareLink(item: url) { Label("Send", systemImage: "paperplane.fill") }
+                    .buttonStyle(GlowButtonStyle())
+            } else {
+                Button {} label: { Label("Send", systemImage: "paperplane.fill") }
+                    .buttonStyle(GlowButtonStyle()).disabled(true)
             }
-            HStack {
-                Button("Rename") {
+            HStack(spacing: 10) {
+                FileActionTile(title: copied ? "Copied" : "Copy link", icon: copied ? "checkmark" : "link", tint: Brand.mint) {
+                    UIPasteboard.general.string = store.shareLink(for: file)
+                    withAnimation(.spring(response: 0.3)) { copied = true }
+                    Haptics.tap()
+                }
+                .disabled(file.state != .stored)
+                FileActionTile(title: "Rename", icon: "pencil", tint: Brand.sky) {
                     newName = file.name
                     renaming = true
                 }
-                Spacer()
-                Button("Delete", role: .destructive) { confirmDelete = true }
-                    .foregroundStyle(Brand.danger)
+                FileActionTile(title: "Delete", icon: "trash", tint: Brand.danger) {
+                    Haptics.warning()
+                    confirmDelete = true
+                }
             }
-            .font(.system(.subheadline, design: .rounded, weight: .semibold))
-            .foregroundStyle(Brand.muted)
-            .padding(.horizontal, 6)
         }
         .task { await open() }
         .quickLookPreview($previewing)
@@ -728,5 +718,43 @@ struct FileDetailView: View {
         } catch {
             problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+}
+
+/// A square action under a file: an icon in a tinted well with its name beneath.
+struct FileActionTile: View {
+    let title: String
+    let icon: String
+    let tint: Color
+    let action: () -> Void
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(tint)
+                    .frame(width: 40, height: 40)
+                    .background(tint.opacity(0.14), in: Circle())
+                Text(title)
+                    .font(.system(.footnote, design: .rounded, weight: .bold))
+                    .foregroundStyle(tint == Brand.danger ? Brand.danger : Brand.text)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(tint.opacity(0.25)))
+            .opacity(enabled ? 1 : 0.4)
+        }
+        .buttonStyle(TilePressStyle())
+    }
+}
+
+private struct TilePressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
