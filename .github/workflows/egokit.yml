@@ -1,0 +1,31 @@
+# Runs the EgoKit unit tests and builds the app, so a change to signing or the
+# wallet can be checked without a Mac at hand.
+name: EgoKit
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Newest Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: EgoKit tests
+        working-directory: EgoKit
+        run: swift test
+
+      - name: Build the app
+        run: |
+          brew install xcodegen
+          xcodegen generate -q
+          xcodebuild build -project EgoWallet.xcodeproj -scheme EgoWallet \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet

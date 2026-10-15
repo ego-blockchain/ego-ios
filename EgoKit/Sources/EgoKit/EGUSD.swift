@@ -59,12 +59,13 @@ extension Transactions {
         priceMicroUsd: UInt64,
         nonce: UInt64,
         fee: UInt64,
-        timestamp: Int64 = Int64(Date().timeIntervalSince1970)
+        timestamp: Int64 = Int64(Date().timeIntervalSince1970),
+        version: Int = 2
     ) throws -> SignedTransaction {
         guard amount > 0, priceMicroUsd > 0 else { throw TransactionError.zeroAmount }
         return try sign(
             key: key, to: EGUSD.burnAddress, amount: amount, nonce: nonce, fee: fee,
-            memo: "credits_mint:\(priceMicroUsd)", txType: "credits_mint", timestamp: timestamp
+            memo: "credits_mint:\(priceMicroUsd)", txType: "credits_mint", timestamp: timestamp, version: version
         )
     }
 
@@ -75,13 +76,14 @@ extension Transactions {
         credits: UInt64,
         nonce: UInt64,
         fee: UInt64,
-        timestamp: Int64 = Int64(Date().timeIntervalSince1970)
+        timestamp: Int64 = Int64(Date().timeIntervalSince1970),
+        version: Int = 2
     ) throws -> SignedTransaction {
         guard EgoAddress.isValid(to), to != key.address, to != EGUSD.burnAddress else { throw TransactionError.badRecipient }
         guard credits > 0 else { throw TransactionError.zeroAmount }
         return try sign(
             key: key, to: to, amount: 0, nonce: nonce, fee: fee,
-            memo: "credits_pay:\(credits)", txType: "credits_pay", timestamp: timestamp
+            memo: "credits_pay:\(credits)", txType: "credits_pay", timestamp: timestamp, version: version
         )
     }
 }

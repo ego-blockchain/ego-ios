@@ -82,6 +82,49 @@ public enum Transactions {
         return out
     }
 
+    /// Version 3 also signs the fee, the priority fee and the transaction type, so a node
+    /// relaying the transaction can't raise the fee it charges. Mirrors the node's
+    /// `ledger::tx_signing_bytes_v3` byte for byte.
+    public static func signingBytesV3(
+        from: String,
+        to: String,
+        amount: UInt64,
+        nonce: UInt64,
+        timestamp: Int64,
+        chainId: UInt8,
+        fee: UInt64,
+        priorityFee: UInt64,
+        txType: String,
+        memo: String
+    ) -> [UInt8] {
+        let memoBytes = Array(memo.utf8)
+        let typeBytes = Array(txType.utf8)
+        let colon = UInt8(ascii: ":")
+        var out = Array("ego/tx/v3:".utf8)
+        out.append(chainId)
+        out.append(colon)
+        out.append(contentsOf: from.utf8)
+        out.append(colon)
+        out.append(contentsOf: to.utf8)
+        out.append(colon)
+        out.append(contentsOf: amount.littleEndianBytes)
+        out.append(colon)
+        out.append(contentsOf: nonce.littleEndianBytes)
+        out.append(colon)
+        out.append(contentsOf: UInt64(bitPattern: timestamp).littleEndianBytes)
+        out.append(colon)
+        out.append(contentsOf: fee.littleEndianBytes)
+        out.append(colon)
+        out.append(contentsOf: priorityFee.littleEndianBytes)
+        out.append(colon)
+        out.append(contentsOf: UInt32(typeBytes.count).littleEndianBytes)
+        out.append(contentsOf: typeBytes)
+        out.append(colon)
+        out.append(contentsOf: UInt32(memoBytes.count).littleEndianBytes)
+        out.append(contentsOf: memoBytes)
+        return out
+    }
+
     public static func transfer(
         key: EgoKey,
         to: String,
@@ -89,12 +132,13 @@ public enum Transactions {
         nonce: UInt64,
         fee: UInt64,
         memo: String = "",
-        timestamp: Int64 = Int64(Date().timeIntervalSince1970)
+        timestamp: Int64 = Int64(Date().timeIntervalSince1970),
+        version: Int = 2
     ) throws -> SignedTransaction {
         guard memo.utf8.count <= maxMemoBytes else { throw TransactionError.memoTooLong }
         guard EgoAddress.isValid(to) else { throw TransactionError.badRecipient }
         guard amount > 0 else { throw TransactionError.zeroAmount }
-        return try sign(key: key, to: to, amount: amount, nonce: nonce, fee: fee, memo: memo, txType: "transfer", timestamp: timestamp)
+        return try sign(key: key, to: to, amount: amount, nonce: nonce, fee: fee, memo: memo, txType: "transfer", timestamp: timestamp, version: version)
     }
 
     public static func sign(
@@ -105,10 +149,15 @@ public enum Transactions {
         fee: UInt64,
         memo: String,
         txType: String,
-        timestamp: Int64
+        timestamp: Int64,
+        version: Int = 2
     ) throws -> SignedTransaction {
+        guard memo.utf8.count <= maxMemoBytes else { throw TransactionError.memoTooLong }
         let from = key.address
-        let bytes = signingBytesV2(from: from, to: to, amount: amount, nonce: nonce, timestamp: timestamp, chainId: EgoNetwork.chainId, memo: memo)
+        let bytes = version >= 3
+            ? signingBytesV3(from: from, to: to, amount: amount, nonce: nonce, timestamp: timestamp, chainId: EgoNetwork.chainId,
+                             fee: fee, priorityFee: 0, txType: txType, memo: memo)
+            : signingBytesV2(from: from, to: to, amount: amount, nonce: nonce, timestamp: timestamp, chainId: EgoNetwork.chainId, memo: memo)
         let signature = try key.sign(bytes)
         return SignedTransaction(
             hash: "0x" + Hex.encode(Blake2s.hash(bytes)),
@@ -123,7 +172,7 @@ public enum Transactions {
             publicKeyEd25519: Hex.encode(key.publicKey),
             feeUegoc: fee,
             txType: txType,
-            txVersion: 2,
+            txVersion: version >= 3 ? 3 : 2,
             chainId: Int(EgoNetwork.chainId)
         )
     }

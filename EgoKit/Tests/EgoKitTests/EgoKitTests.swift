@@ -82,6 +82,32 @@ final class EgoKitTests: XCTestCase {
         XCTAssertTrue(String(decoding: try JSONEncoder().encode(empty), as: UTF8.self).contains("\"memo\":null"))
     }
 
+    func testVersion3SignsTheFeeAndMatchesTheNode() throws {
+        let bytes = Transactions.signingBytesV3(
+            from: "egot1sender", to: "egot1recipient", amount: 2_500_000, nonce: 7, timestamp: 1_800_000_000,
+            chainId: 1, fee: 1_000, priorityFee: 0, txType: "transfer", memo: "lunch")
+        XCTAssertEqual(Hex.encode(bytes), "65676f2f74782f76333a013a65676f743173656e6465723a65676f7431726563697069656e743aa0252600000000003a07000000000000003a00d2496b000000003ae8030000000000003a00000000000000003a080000007472616e736665723a050000006c756e6368")
+
+        let key = try EgoKey(seed: Hex.decode(vectors.keys[1].seed)!)
+        let to = vectors.keys[2].address
+        let tx = try Transactions.transfer(key: key, to: to, amount: 2_500_000, nonce: 7, fee: 1_000, memo: "lunch", timestamp: 1_800_000_000, version: 3)
+        let signed = Transactions.signingBytesV3(from: key.address, to: to, amount: 2_500_000, nonce: 7, timestamp: 1_800_000_000,
+                                                 chainId: 1, fee: 1_000, priorityFee: 0, txType: "transfer", memo: "lunch")
+        XCTAssertEqual(tx.txVersion, 3)
+        XCTAssertEqual(tx.hash, "0x" + Hex.encode(Blake2s.hash(signed)))
+        XCTAssertTrue(EgoKey.verify(signature: Hex.decode(tx.signature)!, message: signed, publicKey: key.publicKey))
+        let raised = Transactions.signingBytesV3(from: key.address, to: to, amount: 2_500_000, nonce: 7, timestamp: 1_800_000_000,
+                                                 chainId: 1, fee: 900_000, priorityFee: 0, txType: "transfer", memo: "lunch")
+        XCTAssertFalse(EgoKey.verify(signature: Hex.decode(tx.signature)!, message: raised, publicKey: key.publicKey))
+    }
+
+    func testNonceInfoDefaultsToVersion2FromOlderNodes() throws {
+        let old = try JSONDecoder().decode(NonceInfo.self, from: Data(#"{"last_confirmed":3,"next":4,"fee_uegoc":1000,"chain_id":1}"#.utf8))
+        XCTAssertEqual(old.txVersion, 2)
+        let new = try JSONDecoder().decode(NonceInfo.self, from: Data(#"{"last_confirmed":3,"next":4,"fee_uegoc":1000,"chain_id":1,"tx_version":3}"#.utf8))
+        XCTAssertEqual(new.txVersion, 3)
+    }
+
     func testBadTransfersAreRefusedBeforeSigning() throws {
         let key = try EgoKey(seed: Hex.decode(vectors.keys[1].seed)!)
         XCTAssertThrowsError(try Transactions.transfer(key: key, to: "egot1notreal", amount: 1, nonce: 1, fee: 1))

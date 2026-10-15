@@ -57,11 +57,29 @@ public struct NonceInfo: Decodable, Equatable {
     public let lastConfirmed: UInt64
     public let next: UInt64
     public let feeUegoc: UInt64
+    /// The signing format the node wants. Nodes from before version 3 don't send it.
+    public let txVersion: Int
 
     enum CodingKeys: String, CodingKey {
         case next
         case lastConfirmed = "last_confirmed"
         case feeUegoc = "fee_uegoc"
+        case txVersion = "tx_version"
+    }
+
+    public init(lastConfirmed: UInt64, next: UInt64, feeUegoc: UInt64, txVersion: Int = 2) {
+        self.lastConfirmed = lastConfirmed
+        self.next = next
+        self.feeUegoc = feeUegoc
+        self.txVersion = txVersion
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lastConfirmed = try c.decode(UInt64.self, forKey: .lastConfirmed)
+        next = try c.decode(UInt64.self, forKey: .next)
+        feeUegoc = try c.decode(UInt64.self, forKey: .feeUegoc)
+        txVersion = try c.decodeIfPresent(Int.self, forKey: .txVersion) ?? 2
     }
 }
 

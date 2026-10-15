@@ -290,9 +290,9 @@ final class AppModel: ObservableObject {
         let info = try await perform { try await $0.nonce(of: address) }
         switch item.kind {
         case .egoc:
-            return try Transactions.transfer(key: key, to: item.to, amount: item.amount, nonce: info.next, fee: info.feeUegoc, memo: item.memo)
+            return try Transactions.transfer(key: key, to: item.to, amount: item.amount, nonce: info.next, fee: info.feeUegoc, memo: item.memo, version: info.txVersion)
         case .egusd:
-            return try Transactions.creditsPay(key: key, to: item.to, credits: item.amount, nonce: info.next, fee: info.feeUegoc)
+            return try Transactions.creditsPay(key: key, to: item.to, credits: item.amount, nonce: info.next, fee: info.feeUegoc, version: info.txVersion)
         }
     }
 
@@ -391,7 +391,7 @@ final class AppModel: ObservableObject {
         guard let key else { throw WalletError.locked }
         let address = key.address
         let info = try await perform { try await $0.nonce(of: address) }
-        let tx = try Transactions.storagePlan(key: key, plan: plan, billing: billing, nonce: info.next, fee: info.feeUegoc)
+        let tx = try Transactions.storagePlan(key: key, plan: plan, billing: billing, nonce: info.next, fee: info.feeUegoc, version: info.txVersion)
         return try await submit(tx)
     }
 
@@ -411,7 +411,7 @@ final class AppModel: ObservableObject {
         guard let key else { throw WalletError.locked }
         let address = key.address
         let info = try await perform { try await $0.nonce(of: address) }
-        let tx = try Transactions.creditsMint(key: key, amount: amount, priceMicroUsd: priceMicroUsd, nonce: info.next, fee: info.feeUegoc)
+        let tx = try Transactions.creditsMint(key: key, amount: amount, priceMicroUsd: priceMicroUsd, nonce: info.next, fee: info.feeUegoc, version: info.txVersion)
         return try await submit(tx)
     }
 
@@ -556,7 +556,8 @@ final class AppModel: ObservableObject {
         for (i, note) in plan.notes.enumerated() {
             let tx = try Transactions.sign(
                 key: key, to: Shielded.poolAddress, amount: note.value, nonce: info.next + UInt64(i),
-                fee: info.feeUegoc, memo: note.memo, txType: "shield", timestamp: Int64(Date().timeIntervalSince1970)
+                fee: info.feeUegoc, memo: note.memo, txType: "shield", timestamp: Int64(Date().timeIntervalSince1970),
+                version: info.txVersion
             )
             hashes.append(try await submit(tx))
         }

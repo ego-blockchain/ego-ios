@@ -121,11 +121,11 @@ public extension Transactions {
     /// an ordinary address, so it's named here rather than checked.
     static func storagePlan(
         key: EgoKey, plan: EgoStorage.Plan, billing: EgoStorage.Billing,
-        nonce: UInt64, fee: UInt64, timestamp: Int64 = Int64(Date().timeIntervalSince1970)
+        nonce: UInt64, fee: UInt64, timestamp: Int64 = Int64(Date().timeIntervalSince1970), version: Int = 2
     ) throws -> SignedTransaction {
         guard !plan.isFree else { throw TransactionError.zeroAmount }
         return try sign(key: key, to: EgoStorage.feeSink, amount: 0, nonce: nonce, fee: fee,
-                        memo: EgoStorage.planMemo(for: plan, billing: billing), txType: "credits_pay", timestamp: timestamp)
+                        memo: EgoStorage.planMemo(for: plan, billing: billing), txType: "credits_pay", timestamp: timestamp, version: version)
     }
 }
 
