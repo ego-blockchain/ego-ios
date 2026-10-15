@@ -163,7 +163,7 @@ final class EgoKitTests: XCTestCase {
 
     func testChatTextRulesMatchTheNode() {
         XCTAssertNil(ChatRules.cleanBody("   "))
-        XCTAssertNil(ChatRules.cleanBody(String(repeating: "x", count: 501)))
+        XCTAssertNil(ChatRules.cleanBody(String(repeating: "x", count: ChatRules.maxBodyCharacters + 1)))
         XCTAssertNil(ChatRules.cleanBody("bell\u{7}"))
         XCTAssertEqual(ChatRules.cleanBody("  two\nlines  "), "two\nlines")
         XCTAssertNil(ChatRules.cleanBody(Array(repeating: "l", count: 13).joined(separator: "\n")))
