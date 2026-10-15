@@ -166,7 +166,7 @@ final class EgoKitTests: XCTestCase {
         XCTAssertNil(ChatRules.cleanBody(String(repeating: "x", count: ChatRules.maxBodyCharacters + 1)))
         XCTAssertNil(ChatRules.cleanBody("bell\u{7}"))
         XCTAssertEqual(ChatRules.cleanBody("  two\nlines  "), "two\nlines")
-        XCTAssertNil(ChatRules.cleanBody(Array(repeating: "l", count: 13).joined(separator: "\n")))
+        XCTAssertNil(ChatRules.cleanBody(Array(repeating: "l", count: ChatRules.maxLines + 1).joined(separator: "\n")))
         XCTAssertEqual(ChatRules.cleanName("  Artit "), "Artit")
         XCTAssertNil(ChatRules.cleanName(String(repeating: "n", count: 25)))
         XCTAssertNil(ChatRules.cleanName("tab\there"))
