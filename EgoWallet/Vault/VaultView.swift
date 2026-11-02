@@ -234,6 +234,7 @@ struct VaultView: View {
         do {
             let s = try await app.vaultStatus()
             status = s
+            if s.vault != nil || !s.helping.isEmpty { app.askForAlerts() }
             problem = nil
             if await app.sendDueVaultSends(s) > 0 {
                 note = "A waiting send's delay is over, so it went out."

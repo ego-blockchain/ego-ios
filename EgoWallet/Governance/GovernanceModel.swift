@@ -106,6 +106,7 @@ extension AppModel {
         let commit = Dao.voteCommit(id: proposal.id, voter: address, salt: salt, answers: bytes)
         let secret = Dao.Secret(id: proposal.id, salt: salt, answers: bytes, isCreator: false)
         saveDaoSecret(secret)
+        askForAlerts()
         do {
             try await daoOperation(Dao.know, Dao.KnowBody(id: proposal.id, option: UInt32(option), commit: commit))
         } catch {
@@ -132,7 +133,10 @@ extension AppModel {
                                    version: max(3, info.txVersion))
         let id = Dao.proposalId(txHash: tx.hash)
         let secret = Dao.Secret(id: id, salt: salt, answers: answers, isCreator: true)
-        if !questions.isEmpty { saveDaoSecret(secret) }
+        if !questions.isEmpty {
+            saveDaoSecret(secret)
+            askForAlerts()
+        }
         do {
             _ = try await submit(tx)
         } catch {
