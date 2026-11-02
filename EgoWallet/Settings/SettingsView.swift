@@ -32,6 +32,20 @@ struct SettingsView: View {
                         .padding(.vertical, 4)
                     }
                 }
+                Section {
+                    NavigationLink(value: VaultPage()) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "lock.shield.fill")
+                                .font(.system(size: 28))
+                                .foregroundStyle(Brand.warning)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Wallet vault").font(.system(.body, design: .rounded, weight: .bold))
+                                Text("Delay large sends, freeze, and approve as a second key").font(.caption).foregroundStyle(Brand.muted)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
                 Section("Wallet") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Address").font(.caption).foregroundStyle(Brand.muted)

@@ -137,6 +137,7 @@ struct MainTabs: View {
                 }
             }
             .navigationDestination(for: ProfilePage.self) { _ in ChatProfileView() }
+            .navigationDestination(for: VaultPage.self) { _ in VaultView() }
             .navigationDestination(for: OfferPage.self) { page in
                 OfferDetailView(listing: page.listing, egocUsd: page.egocUsd, mine: page.mine)
             }

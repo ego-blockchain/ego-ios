@@ -422,7 +422,7 @@ final class AppModel: ObservableObject {
 
     /// Sends a signed transaction. If the gateway errors after accepting it,
     /// checks whether it landed anyway before reporting a failure.
-    private func submit(_ tx: SignedTransaction, refreshAfter: Bool = true) async throws -> String {
+    func submit(_ tx: SignedTransaction, refreshAfter: Bool = true) async throws -> String {
         var hash = tx.hash
         do {
             hash = try await perform { try await $0.submit(tx) }.txHash

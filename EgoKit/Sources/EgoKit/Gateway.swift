@@ -342,6 +342,12 @@ public final class GatewayClient {
     public func storageCapacity() async throws -> StorageCapacity {
         try await call("storage.capacity", Empty())
     }
+
+    /// The vault of an address and the vaults it protects as guardian or second key.
+    /// Gateways running Ego Desktop before 0.3.673 don't know it.
+    public func vaultStatus(of address: String) async throws -> Vault.Status {
+        try await call("vault.status", ["address": address])
+    }
 }
 
 public enum CertificatePin {

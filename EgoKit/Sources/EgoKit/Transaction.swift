@@ -21,6 +21,10 @@ public struct SignedTransaction: Codable, Equatable {
     public let txType: String
     public let txVersion: Int
     public let chainId: Int
+    /// The body of a DAO, vault or hold operation. Not signed itself: the signed memo commits to it.
+    public var callArgs: String = ""
+    /// The vault's second-key approval, outside the owner's signature.
+    public var vaultCosig: String = ""
 
     enum CodingKeys: String, CodingKey {
         case hash, from, to, amount, memo, timestamp, signature, status, nonce
@@ -29,6 +33,8 @@ public struct SignedTransaction: Codable, Equatable {
         case txType = "tx_type"
         case txVersion = "tx_version"
         case chainId = "chain_id"
+        case callArgs = "call_args"
+        case vaultCosig = "vault_cosig"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -47,6 +53,32 @@ public struct SignedTransaction: Codable, Equatable {
         try c.encode(txType, forKey: .txType)
         try c.encode(txVersion, forKey: .txVersion)
         try c.encode(chainId, forKey: .chainId)
+        if !callArgs.isEmpty { try c.encode(callArgs, forKey: .callArgs) }
+        if !vaultCosig.isEmpty { try c.encode(vaultCosig, forKey: .vaultCosig) }
+    }
+}
+
+extension SignedTransaction {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            hash: try c.decode(String.self, forKey: .hash),
+            from: try c.decode(String.self, forKey: .from),
+            to: try c.decode(String.self, forKey: .to),
+            amount: try c.decode(UInt64.self, forKey: .amount),
+            memo: try c.decodeIfPresent(String.self, forKey: .memo),
+            timestamp: try c.decode(Int64.self, forKey: .timestamp),
+            signature: try c.decode(String.self, forKey: .signature),
+            status: try c.decode(String.self, forKey: .status),
+            nonce: try c.decode(UInt64.self, forKey: .nonce),
+            publicKeyEd25519: try c.decode(String.self, forKey: .publicKeyEd25519),
+            feeUegoc: try c.decode(UInt64.self, forKey: .feeUegoc),
+            txType: try c.decode(String.self, forKey: .txType),
+            txVersion: try c.decode(Int.self, forKey: .txVersion),
+            chainId: try c.decode(Int.self, forKey: .chainId),
+            callArgs: try c.decodeIfPresent(String.self, forKey: .callArgs) ?? "",
+            vaultCosig: try c.decodeIfPresent(String.self, forKey: .vaultCosig) ?? ""
+        )
     }
 }
 

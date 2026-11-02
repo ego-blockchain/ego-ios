@@ -36,6 +36,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Ego Wallet
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.finance
         INFOPLIST_KEY_NSFaceIDUsageDescription: Ego Wallet uses Face ID to unlock your wallet and to show your recovery phrase.
+        INFOPLIST_KEY_NSCameraUsageDescription: Ego Wallet uses the camera to scan a vault approval request from Ego Desktop.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIStatusBarStyle: UIStatusBarStyleLightContent

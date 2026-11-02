@@ -7,6 +7,8 @@ import SwiftUI
 
 struct SendView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var overLimit = false
+    @State private var delayedHours: Int64?
     @Environment(\.dismiss) private var dismiss
     @State private var recipient = ""
     @State private var amountText = ""
@@ -28,7 +30,9 @@ struct SendView: View {
     var body: some View {
         FlowSheet(icon: waiting ? "clock" : "arrow.up.right", title: sentHash != nil ? "On its way" : waiting ? "Waiting to send" : "Send EGOC",
                   subtitle: sentHash == nil && !waiting ? "To any Ego address" : nil, step: step) {
-            if waiting {
+            if let delayedHours {
+                SuccessBurst(title: "Waiting", subtitle: "Your vault holds this send for \(delayedHours) hours, then this app sends it the next time you open Wallet vault. You can cancel it there until then.", icon: "lock.shield.fill")
+            } else if waiting {
                 SuccessBurst(title: "Saved", subtitle: "No Ego node can be reached right now. Your payment is kept on this iPhone and sent automatically as soon as one answers.", icon: "clock.fill")
             } else if let sentHash {
                 SuccessBurst(title: "Sent", subtitle: "It shows as pending until the network confirms it, usually within seconds.")
@@ -58,8 +62,16 @@ struct SendView: View {
                 }
             }
             if let problem { ProblemBanner(text: problem) }
+            if overLimit && delayedHours == nil {
+                NoteCard(text: "This is above your vault's daily limit. Send it with your vault's delay, or approve it from your second key in Ego Desktop.", icon: "lock.shield.fill", tint: Brand.warning)
+            }
         } footer: {
-            if sentHash != nil || waiting {
+            if overLimit, delayedHours == nil, let amount {
+                Button(busy ? "Sending…" : "Send with delay") { Task { await sendDelayed(amount) } }
+                    .buttonStyle(GlowButtonStyle())
+                    .disabled(busy)
+                Button("Change something") { withAnimation { overLimit = false; reviewing = false; problem = nil } }.buttonStyle(GhostButtonStyle()).disabled(busy)
+            } else if sentHash != nil || waiting || delayedHours != nil {
                 Button("Done") { dismiss() }.buttonStyle(GlowButtonStyle())
             } else if reviewing, let amount {
                 HoldToConfirm(title: "Hold to send \(Amount.format(amount)) EGOC", busy: busy) { Task { await send(amount) } }
@@ -83,7 +95,25 @@ struct SendView: View {
             }
         } catch {
             Haptics.warning()
-            problem = model.message(for: error)
+            if Vault.isOverLimit(error) {
+                overLimit = true
+                problem = nil
+            } else {
+                problem = model.message(for: error)
+            }
+        }
+        busy = false
+    }
+
+    private func sendDelayed(_ amount: UInt64) async {
+        busy = true
+        problem = nil
+        do {
+            let wait = try await model.sendWithDelay(to: to, amount: amount)
+            withAnimation(.spring) { delayedHours = wait / 3600 }
+        } catch {
+            Haptics.warning()
+            problem = Vault.readable(error)
         }
         busy = false
     }
