@@ -46,6 +46,32 @@ struct SettingsView: View {
                         .padding(.vertical, 4)
                     }
                 }
+                Section {
+                    NavigationLink(value: GovernancePage()) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "building.columns.fill")
+                                .font(.system(size: 26))
+                                .foregroundStyle(Brand.lime)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Governance").font(.system(.body, design: .rounded, weight: .bold))
+                                Text("Vote on proposals and create your own").font(.caption).foregroundStyle(Brand.muted)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    NavigationLink(value: StakingPage()) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "lock.circle.fill")
+                                .font(.system(size: 26))
+                                .foregroundStyle(Brand.mint)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Staking").font(.system(.body, design: .rounded, weight: .bold))
+                                Text("Lock EGOC to secure the network and to vote").font(.caption).foregroundStyle(Brand.muted)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
                 Section("Wallet") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Address").font(.caption).foregroundStyle(Brand.muted)
