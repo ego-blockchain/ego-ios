@@ -212,11 +212,27 @@ public enum Vault {
         return approvalPrefix + Hex.encode(key.publicKey) + ":" + Hex.encode(signature)
     }
 
-    public struct SetBody: Encodable { public let settings: Settings }
-    public struct OwnerBody: Encodable { public let owner: String }
-    public struct CancelBody: Encodable { public let owner: String; public let target: String }
-    public struct QueueBody: Encodable { public let to: String; public let amount: UInt64 }
-    public struct EmptyBody: Encodable {}
+    public struct SetBody: Encodable {
+        public let settings: Settings
+        public init(settings: Settings) { self.settings = settings }
+    }
+    public struct OwnerBody: Encodable {
+        public let owner: String
+        public init(owner: String) { self.owner = owner }
+    }
+    public struct CancelBody: Encodable {
+        public let owner: String
+        public let target: String
+        public init(owner: String, target: String) { self.owner = owner; self.target = target }
+    }
+    public struct QueueBody: Encodable {
+        public let to: String
+        public let amount: UInt64
+        public init(to: String, amount: UInt64) { self.to = to; self.amount = amount }
+    }
+    public struct EmptyBody: Encodable {
+        public init() {}
+    }
 
     public static func body<T: Encodable>(_ value: T) throws -> String {
         let encoder = JSONEncoder()

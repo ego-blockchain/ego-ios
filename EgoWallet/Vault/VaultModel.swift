@@ -119,7 +119,7 @@ extension AppModel {
         guard let key else { throw WalletError.locked }
         let owner = request.from
         let theirs = try await perform { try await $0.vaultStatus(of: owner) }
-        guard let secondKey = theirs.vault?.settings.secondKey, !secondKey.isEmpty else { throw VaultError.notSecondKey }
+        guard let secondKey = theirs.vault?.settings.secondKey, !secondKey.isEmpty else { throw EgoKit.VaultError.notSecondKey }
         return try Vault.approve(request, with: key, secondKey: secondKey)
     }
 }
