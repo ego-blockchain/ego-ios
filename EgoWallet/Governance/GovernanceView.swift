@@ -17,52 +17,36 @@ struct GovernanceView: View {
     }
 
     var body: some View {
-        Form {
-            PageTitle("Governance")
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-            Section {
-                Text("Holders decide on changes to Ego. A stake vote counts your staked EGOC. A knowledge vote counts how well you answer the proposal's questions; your answers stay hidden until voting ends, and this iPhone reveals them for you.")
-                    .font(.footnote)
-                    .foregroundStyle(Brand.muted)
-                NavigationLink(value: StakingPage()) { Label("Staking", systemImage: "lock.circle") }
-                NavigationLink(value: HoldsPage()) { Label("Theft holds", systemImage: "hand.raised") }
+        GlassPage {
+            PageTitle("Governance", subtitle: "Holders decide what changes in Ego")
+            if let note { NoteCard(text: note, icon: "checkmark.circle.fill", tint: Brand.mint) }
+            if let problem { ProblemBanner(text: problem) }
+            HStack(spacing: 10) {
+                shortcut("Staking", "lock.circle.fill", StakingPage())
+                shortcut("Theft holds", "hand.raised.fill", HoldsPage())
             }
             if let limits, !limits.active {
-                Section { Text("DAO voting isn't on the chain yet.").font(.footnote) }
+                NoteCard(text: "DAO voting isn't on the chain yet.", icon: "clock.fill", tint: Brand.warning)
             }
-            Section {
-                Picker("Show", selection: $showActive) {
-                    Text("Open").tag(true)
-                    Text("Ended").tag(false)
+            if let limits, limits.active { newProposalCard(limits) }
+            GlassSegments(selection: $showActive, options: [true, false]) { $0 ? "Open" : "Ended" }
+            if proposals == nil && problem == nil {
+                ProgressView().tint(Brand.lime).frame(maxWidth: .infinity).padding(.top, 30)
+            } else if shown.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: showActive ? "checkmark.seal" : "archivebox")
+                        .font(.system(size: 30, weight: .semibold)).foregroundStyle(Brand.muted)
+                    Text(showActive ? "No open proposals right now." : "No ended proposals yet.")
+                        .font(.subheadline).foregroundStyle(Brand.muted)
                 }
-                .pickerStyle(.segmented)
-                if proposals == nil && problem == nil {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else if shown.isEmpty {
-                    Text(showActive ? "No open proposals." : "No ended proposals.").font(.footnote).foregroundStyle(Brand.muted)
-                }
-                ForEach(shown) { p in
-                    NavigationLink(value: ProposalPage(id: p.id)) { ProposalRow(proposal: p, mine: p.creator == app.address) }
-                }
+                .frame(maxWidth: .infinity).padding(.vertical, 30)
             }
-            if let limits, limits.active {
-                Section {
-                    Button { creating = true } label: { Label("New proposal", systemImage: "plus.circle") }
-                        .disabled(limits.left == 0 || limits.banned)
-                    Text(limits.banned ? "Staked holders reported this wallet, so it can't create proposals for now."
-                         : "\(limits.left) of \(limits.max) proposals left this month.")
-                        .font(.caption).foregroundStyle(Brand.muted)
-                }
+            ForEach(shown) { p in
+                NavigationLink(value: ProposalPage(id: p.id)) { ProposalRow(proposal: p, mine: p.creator == app.address) }
+                    .buttonStyle(.plain)
             }
-            if let note {
-                Section { Text(note).font(.footnote) }
-            }
-            if let problem {
-                Section { Text(problem).font(.footnote).foregroundStyle(Brand.danger) }
-            }
+            NoteCard(text: "A stake vote counts your staked EGOC. A knowledge vote counts how well you answer the proposal's questions; your answers stay hidden until voting ends, and this iPhone reveals them for you.")
         }
-        .scrollContentBackground(.hidden)
         .refreshable { await load() }
         .task { await load() }
         .sheet(isPresented: $creating) {
@@ -76,6 +60,48 @@ struct GovernanceView: View {
                 }
             }
         }
+    }
+
+    private func shortcut<V: Hashable>(_ title: String, _ icon: String, _ value: V) -> some View {
+        NavigationLink(value: value) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 18, weight: .bold)).foregroundStyle(Brand.lime)
+                Text(title).font(.system(.subheadline, design: .rounded, weight: .bold)).foregroundStyle(Brand.text)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Brand.muted)
+            }
+            .padding(14)
+            .background(.ultraThinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(Brand.card.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.white.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func newProposalCard(_ limits: Dao.Limits) -> some View {
+        Button { creating = true } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .heavy))
+                    .foregroundStyle(Brand.ink)
+                    .frame(width: 46, height: 46)
+                    .background(Brand.glow, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("New proposal").font(.system(.headline, design: .rounded)).foregroundStyle(Brand.text)
+                    Text(limits.banned ? "Staked holders reported this wallet, so it can't propose for now."
+                         : "\(limits.left) of \(limits.max) left this month")
+                        .font(.caption).foregroundStyle(limits.banned ? Brand.warning : Brand.muted)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(.ultraThinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background(Brand.card.opacity(0.6), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Brand.lime.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .disabled(limits.left == 0 || limits.banned)
+        .opacity(limits.left == 0 || limits.banned ? 0.5 : 1)
     }
 
     private func load() async {
@@ -104,22 +130,56 @@ private struct ProposalRow: View {
     let mine: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(proposal.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-            HStack(spacing: 8) {
-                Text(proposal.kind.capitalized)
-                Text(proposal.isActive ? "Ends \(relative(proposal.endsAt))" : proposal.status.capitalized)
-                if mine { Text("Yours") }
-                if proposal.hasVoted { Text("Voted").foregroundStyle(Brand.lime) }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Tag(text: proposal.kind.capitalized, tint: Brand.sky)
+                if proposal.hasKnowledgeTest { Tag(text: "Knowledge test", tint: Brand.violet) }
+                if mine { Tag(text: "Yours", tint: Brand.amber) }
+                Spacer(minLength: 0)
+                if proposal.hasVoted {
+                    Label("Voted", systemImage: "checkmark.circle.fill")
+                        .font(.system(.caption, design: .rounded, weight: .bold)).foregroundStyle(Brand.lime)
+                }
+            }
+            Text(proposal.title)
+                .font(.system(.headline, design: .rounded))
+                .foregroundStyle(Brand.text)
+                .multilineTextAlignment(.leading)
+                .lineLimit(2)
+            HStack(spacing: 12) {
+                Label(proposal.isActive ? "Ends \(relative(proposal.endsAt))" : proposal.status.capitalized,
+                      systemImage: proposal.isActive ? "clock" : "flag.checkered")
+                Label("\(proposal.stakeVoteCount + proposal.knowledgeVoteCount)", systemImage: "person.3.fill")
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
             }
             .font(.caption)
             .foregroundStyle(Brand.muted)
         }
-        .padding(.vertical, 2)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Brand.card.opacity(0.6), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(0.1)))
     }
 
     private func relative(_ ts: Int64) -> String {
         Date(timeIntervalSince1970: TimeInterval(ts)).formatted(.relative(presentation: .named))
+    }
+}
+
+/// A small coloured label on a card.
+struct Tag: View {
+    let text: String
+    var tint: Color = Brand.lime
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.14), in: Capsule())
     }
 }
 
@@ -138,47 +198,22 @@ struct ProposalView: View {
     @State private var confirmingWithdraw = false
 
     var body: some View {
-        Form {
+        GlassPage {
+            if let note { NoteCard(text: note, icon: "checkmark.circle.fill", tint: Brand.mint) }
+            if let problem { ProblemBanner(text: problem) }
             if let p = detail?.proposal {
-                Section {
-                    Text(p.title).font(.headline)
-                    Text(p.description).font(.footnote)
-                    HStack {
-                        Text(p.kind.capitalized)
-                        Spacer()
-                        Text(p.isActive ? "Voting ends \(date(p.endsAt))" : "Ended \(date(p.endsAt))")
-                    }
-                    .font(.caption)
-                    .foregroundStyle(Brand.muted)
-                    Text("By \(shortAddress(p.creator))").font(.caption).foregroundStyle(Brand.muted)
-                }
+                header(p)
                 if p.isActive && !p.hasVoted {
                     vote(p)
                 } else if p.hasVoted {
-                    Section("Your vote") {
-                        if let o = p.myStakeVote, o < p.options.count { Text("Stake vote: \(p.options[o])").font(.footnote) }
-                        if let o = p.myKnowledgeVote, o < p.options.count { Text("Knowledge vote: \(p.options[o])").font(.footnote) }
-                        if let score = p.myTestScore {
-                            Text("Your test score: \(score.formatted(.percent.precision(.fractionLength(0))))").font(.footnote)
-                        } else if p.myKnowledgeVote != nil {
-                            Text(p.answersRevealed ? "This iPhone reveals your answers next time you open Governance." : "Your answers stay hidden until the creator reveals the right ones after voting ends.")
-                                .font(.caption).foregroundStyle(Brand.muted)
-                        }
-                    }
+                    yourVote(p)
                 }
                 if let r = detail?.results { results(p, r) }
                 creatorSection(p)
             } else if problem == nil {
-                Section { ProgressView().frame(maxWidth: .infinity) }
-            }
-            if let note {
-                Section { Text(note).font(.footnote) }
-            }
-            if let problem {
-                Section { Text(problem).font(.footnote).foregroundStyle(Brand.danger) }
+                ProgressView().tint(Brand.lime).frame(maxWidth: .infinity).padding(.top, 40)
             }
         }
-        .scrollContentBackground(.hidden)
         .navigationTitle("Proposal")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }
@@ -197,34 +232,98 @@ struct ProposalView: View {
         }
     }
 
+    private func header(_ p: Dao.Proposal) -> some View {
+        GlassCard {
+            HStack(spacing: 6) {
+                Tag(text: p.kind.capitalized, tint: Brand.sky)
+                Tag(text: p.isActive ? "Open" : p.status.capitalized, tint: p.isActive ? Brand.lime : Brand.muted)
+                if p.hasKnowledgeTest { Tag(text: "Knowledge test", tint: Brand.violet) }
+            }
+            Text(p.title)
+                .font(.system(.title2, design: .rounded, weight: .heavy))
+                .foregroundStyle(Brand.text)
+            Text(p.description).font(.subheadline).foregroundStyle(Brand.text.opacity(0.85))
+            HStack(spacing: 14) {
+                Label(p.isActive ? "Ends \(date(p.endsAt))" : "Ended \(date(p.endsAt))", systemImage: "clock")
+                Label(shortAddress(p.creator), systemImage: "person.crop.circle")
+            }
+            .font(.caption).foregroundStyle(Brand.muted)
+        }
+    }
+
     @ViewBuilder
     private func vote(_ p: Dao.Proposal) -> some View {
-        Section("Your choice") {
-            Picker("Option", selection: $option) {
-                Text("Choose").tag(Int?.none)
-                ForEach(p.options.indices, id: \.self) { i in Text(p.options[i]).tag(Int?.some(i)) }
+        GlassCard {
+            SectionLabel(text: "Your choice")
+            ForEach(p.options.indices, id: \.self) { i in
+                choice(p.options[i], on: option == i) { option = i }
             }
             Button("Vote with my stake") {
                 if let option { Task { await run("Voted. Your stake stays locked until voting ends.") { try await app.stakeVote(p, option: option) } } }
             }
+            .buttonStyle(GlowButtonStyle())
             .disabled(busy || option == nil)
         }
         if let questions = p.questions, !questions.isEmpty {
-            Section("Knowledge vote") {
-                Text("Answer the questions to vote by knowledge. Your answers are hidden until voting ends.")
+            GlassCard {
+                SectionLabel(text: "Or vote by knowledge")
+                Text("Pick your choice above, then answer the questions. Your answers stay hidden until voting ends.")
                     .font(.caption).foregroundStyle(Brand.muted)
                 ForEach(questions.indices, id: \.self) { qi in
                     let q = questions[qi]
-                    Picker(q.question, selection: answerBinding(qi, count: questions.count)) {
-                        Text("Choose").tag(Int?.none)
-                        ForEach(q.options.indices, id: \.self) { oi in Text(q.options[oi]).tag(Int?.some(oi)) }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("\(qi + 1). \(q.question)")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold)).foregroundStyle(Brand.text)
+                        ForEach(q.options.indices, id: \.self) { oi in
+                            let binding = answerBinding(qi, count: questions.count)
+                            choice(q.options[oi], on: binding.wrappedValue == oi, compact: true) { binding.wrappedValue = oi }
+                        }
                     }
-                    .pickerStyle(.navigationLink)
+                    .padding(.top, 4)
                 }
                 Button("Vote with my answers") {
                     if let option { Task { await knowledgeVote(p, option: option) } }
                 }
+                .buttonStyle(OutlineButtonStyle(tint: Brand.violet))
                 .disabled(busy || option == nil || answers.count != questions.count || answers.contains(where: { $0 == nil }))
+            }
+        }
+    }
+
+    private func choice(_ text: String, on: Bool, compact: Bool = false, _ pick: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.tap()
+            withAnimation(.snappy) { pick() }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: on ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: compact ? 16 : 20, weight: .semibold))
+                    .foregroundStyle(on ? Brand.lime : Brand.muted)
+                Text(text)
+                    .font(compact ? .footnote : .system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Brand.text)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, compact ? 10 : 14)
+            .background((on ? Brand.lime : Color.white).opacity(on ? 0.1 : 0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(on ? Brand.lime.opacity(0.6) : Color.white.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func yourVote(_ p: Dao.Proposal) -> some View {
+        GlassCard(tint: Brand.lime) {
+            Label("You voted", systemImage: "checkmark.seal.fill")
+                .font(.system(.headline, design: .rounded)).foregroundStyle(Brand.lime)
+            if let o = p.myStakeVote, o < p.options.count { Text("With your stake: \(p.options[o])").font(.subheadline).foregroundStyle(Brand.text) }
+            if let o = p.myKnowledgeVote, o < p.options.count { Text("By knowledge: \(p.options[o])").font(.subheadline).foregroundStyle(Brand.text) }
+            if let score = p.myTestScore {
+                Text("Your test score: \(score.formatted(.percent.precision(.fractionLength(0))))").font(.subheadline).foregroundStyle(Brand.text)
+            } else if p.myKnowledgeVote != nil {
+                Text(p.answersRevealed ? "This iPhone reveals your answers next time you open Governance." : "Your answers stay hidden until the creator reveals the right ones after voting ends.")
+                    .font(.caption).foregroundStyle(Brand.muted)
             }
         }
     }
@@ -239,24 +338,40 @@ struct ProposalView: View {
         )
     }
 
-    @ViewBuilder
     private func results(_ p: Dao.Proposal, _ r: Dao.Results) -> some View {
-        Section("Results") {
+        GlassCard {
+            SectionLabel(text: p.isActive ? "Results so far" : "Results")
             let total = max(r.options.map(\.combinedPower).reduce(0, +), .leastNonzeroMagnitude)
             ForEach(r.options.indices, id: \.self) { i in
                 let o = r.options[i]
-                VStack(alignment: .leading, spacing: 4) {
+                let share = o.combinedPower / total
+                let wins = r.winningOptionIndex == i
+                VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text(o.option).font(.footnote.weight(r.winningOptionIndex == i ? .bold : .regular))
+                        Text(o.option).font(.system(.subheadline, design: .rounded, weight: wins ? .bold : .medium)).foregroundStyle(Brand.text)
+                        if wins { Image(systemName: "crown.fill").font(.caption).foregroundStyle(Brand.lime) }
                         Spacer()
-                        Text((o.combinedPower / total).formatted(.percent.precision(.fractionLength(0)))).font(.footnote)
+                        Text(share.formatted(.percent.precision(.fractionLength(0))))
+                            .font(.system(.subheadline, design: .rounded, weight: .bold))
+                            .foregroundStyle(wins ? Brand.lime : Brand.muted)
                     }
-                    ProgressView(value: o.combinedPower / total).tint(r.winningOptionIndex == i ? Brand.lime : Brand.muted)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.08))
+                            Capsule().fill(wins ? AnyShapeStyle(Brand.glow) : AnyShapeStyle(Brand.muted.opacity(0.5)))
+                                .frame(width: geo.size.width * share)
+                        }
+                    }
+                    .frame(height: 8)
                 }
             }
-            Text("\(r.totalStakeVoters) stake votes · \(r.totalKnowledgeVoters) knowledge votes · \(Amount.format(r.totalStakedInVotes)) EGOC staked in votes")
-                .font(.caption).foregroundStyle(Brand.muted)
-            Text(r.quorumReached ? "Enough stake has voted for the result to count." : "Not enough stake has voted yet for the result to count.")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                StatTile(label: "Stake votes", value: "\(r.totalStakeVoters)", icon: "lock.fill")
+                StatTile(label: "Knowledge votes", value: "\(r.totalKnowledgeVoters)", icon: "brain.head.profile")
+            }
+            Label(r.quorumReached ? "Enough stake has voted for the result to count. \(Amount.format(r.totalStakedInVotes)) EGOC voted."
+                  : "Not enough stake has voted yet for the result to count. \(Amount.format(r.totalStakedInVotes)) EGOC so far.",
+                  systemImage: r.quorumReached ? "checkmark.circle.fill" : "hourglass")
                 .font(.caption).foregroundStyle(r.quorumReached ? Brand.muted : Brand.warning)
         }
     }
@@ -265,19 +380,22 @@ struct ProposalView: View {
     private func creatorSection(_ p: Dao.Proposal) -> some View {
         if p.creator == app.address {
             if p.isActive {
-                Section { Button("Withdraw proposal", role: .destructive) { confirmingWithdraw = true }.disabled(busy) }
+                Button("Withdraw proposal") { confirmingWithdraw = true }
+                    .buttonStyle(OutlineButtonStyle(tint: Brand.danger)).disabled(busy)
             }
         } else {
-            Section("Proposer") {
+            GlassCard {
+                SectionLabel(text: "Proposer")
                 if let ban {
                     Text(ban.banned ? "Reported by enough staked holders; can't create proposals for now."
                          : "\(ban.voteCount) of \(ban.threshold) reports needed to stop this proposer.")
                         .font(.caption).foregroundStyle(Brand.muted)
                 }
                 if ban?.myVote == true {
-                    Text("You reported this proposer.").font(.caption)
+                    Label("You reported this proposer.", systemImage: "flag.fill").font(.caption).foregroundStyle(Brand.text)
                 } else {
-                    Button("Report as spam", role: .destructive) { confirmingReport = true }.disabled(busy)
+                    Button { confirmingReport = true } label: { Label("Report as spam", systemImage: "flag") }
+                        .buttonStyle(OutlineButtonStyle(tint: Brand.danger)).disabled(busy)
                 }
             }
         }
@@ -344,65 +462,90 @@ struct NewProposalView: View {
     }
 
     var body: some View {
-        Form {
-            Section("Proposal") {
-                TextField("Title", text: $title)
-                TextField("What should change, and why", text: $description, axis: .vertical).lineLimit(4...10)
-                Picker("Kind", selection: $kind) {
-                    ForEach(limits.kinds, id: \.self) { Text($0.capitalized).tag($0) }
+        GlassPage {
+            GlassCard {
+                SectionLabel(text: "Proposal")
+                field("Title") { TextField("A short name for the change", text: $title).glassInput() }
+                field("Description") {
+                    TextField("What should change, and why", text: $description, axis: .vertical).lineLimit(4...10).glassInput()
                 }
-                Stepper("Voting lasts \(days) day\(days == 1 ? "" : "s")", value: $days, in: limits.minDays...limits.maxDays)
+                field("Kind") { ChipPicker(selection: $kind, options: limits.kinds) }
+                HStack {
+                    Text("Voting lasts").font(.subheadline).foregroundStyle(Brand.muted)
+                    Spacer()
+                    Text("\(days) day\(days == 1 ? "" : "s")").font(.system(.subheadline, design: .rounded, weight: .bold)).foregroundStyle(Brand.text)
+                    Stepper("", value: $days, in: limits.minDays...limits.maxDays).labelsHidden()
+                }
             }
-            Section("Options") {
+            GlassCard {
+                SectionLabel(text: "Options")
                 ForEach(options.indices, id: \.self) { i in
-                    TextField("Option \(i + 1)", text: $options[i])
+                    TextField("Option \(i + 1)", text: $options[i]).glassInput()
                 }
-                if options.count < limits.maxOptions {
-                    Button("Add option") { options.append("") }
-                }
-                if options.count > 2 {
-                    Button("Remove last option", role: .destructive) { options.removeLast() }
+                HStack {
+                    if options.count < limits.maxOptions {
+                        Button { options.append("") } label: { Label("Add", systemImage: "plus") }
+                            .buttonStyle(OutlineButtonStyle())
+                    }
+                    if options.count > 2 {
+                        Button { options.removeLast() } label: { Label("Remove", systemImage: "minus") }
+                            .buttonStyle(OutlineButtonStyle(tint: Brand.danger))
+                    }
                 }
             }
-            Section {
+            GlassCard {
+                SectionLabel(text: "Knowledge test (optional)")
+                Text("Tick the right answer of each question. It stays on this iPhone until voting ends; open Governance in the week after, so it can reveal the answers. If it doesn't, knowledge votes on this proposal don't count.")
+                    .font(.caption).foregroundStyle(Brand.muted)
                 ForEach($questions) { $q in
-                    VStack(alignment: .leading) {
-                        TextField("Question", text: $q.question)
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Question", text: $q.question).glassInput()
                         ForEach(q.options.indices, id: \.self) { i in
-                            HStack {
-                                TextField("Answer \(i + 1)", text: $q.options[i])
+                            HStack(spacing: 10) {
                                 Button { q.right = i } label: {
                                     Image(systemName: q.right == i ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 20)).foregroundStyle(q.right == i ? Brand.lime : Brand.muted)
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Right answer")
+                                TextField("Answer \(i + 1)", text: $q.options[i]).glassInput()
                             }
                         }
                         if q.options.count < limits.maxQuestionOptions {
-                            Button("Add answer") { q.options.append("") }.buttonStyle(.borderless)
+                            Button { q.options.append("") } label: { Label("Add answer", systemImage: "plus") }
+                                .font(.system(.footnote, design: .rounded, weight: .bold)).foregroundStyle(Brand.lime)
                         }
                     }
+                    .padding(12)
+                    .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                if questions.count < limits.maxQuestions {
-                    Button("Add a question") { questions.append(Draft()) }
+                HStack {
+                    if questions.count < limits.maxQuestions {
+                        Button { questions.append(Draft()) } label: { Label("Add a question", systemImage: "plus") }
+                            .buttonStyle(OutlineButtonStyle(tint: Brand.violet))
+                    }
+                    if !questions.isEmpty {
+                        Button { questions.removeLast() } label: { Label("Remove", systemImage: "minus") }
+                            .buttonStyle(OutlineButtonStyle(tint: Brand.danger))
+                    }
                 }
-                if !questions.isEmpty {
-                    Button("Remove last question", role: .destructive) { questions.removeLast() }
-                }
-            } header: {
-                Text("Knowledge test (optional)")
-            } footer: {
-                Text("Tick the right answer of each question. It stays on this iPhone until voting ends; open Governance in the week after, so it can reveal the answers. If it doesn't, knowledge votes on this proposal don't count.")
             }
-            if let problem {
-                Section { Text(problem).font(.footnote).foregroundStyle(Brand.danger) }
-            }
-            Section {
-                Button(busy ? "Sending…" : "Create proposal") { Task { await create() } }.disabled(busy)
-            }
+            if let problem { ProblemBanner(text: problem) }
+            Button(busy ? "Sending…" : "Create proposal") { Task { await create() } }
+                .buttonStyle(GlowButtonStyle())
+                .disabled(busy)
         }
+        .closesKeyboardOnTapOutside()
         .navigationTitle("New proposal")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+    }
+
+    private func field<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.system(.caption, design: .rounded, weight: .semibold)).foregroundStyle(Brand.muted)
+            content()
+        }
     }
 
     private func trimmed(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines) }

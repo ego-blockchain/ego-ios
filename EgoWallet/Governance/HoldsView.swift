@@ -43,37 +43,36 @@ struct HoldsView: View {
     @State private var busy = false
 
     var body: some View {
-        Form {
-            PageTitle("Theft holds")
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-            Section {
-                Text("When someone's EGOC is stolen, they can ask the network to hold it where it went. Staked holders and nodes vote on each hold; a held address can appeal, and once a hold is confirmed the victim can ask for the funds back.")
-                    .font(.footnote)
-                    .foregroundStyle(Brand.muted)
+        GlassPage {
+            PageTitle("Theft holds", subtitle: "Stop stolen EGOC where it went")
+            if let note { NoteCard(text: note, icon: "checkmark.circle.fill", tint: Brand.mint) }
+            if let problem { ProblemBanner(text: problem) }
+            GlassCard {
+                step("exclamationmark.shield.fill", "A victim asks for a hold", "on the addresses the stolen EGOC went to.")
+                step("checkmark.seal.fill", "Staked holders and nodes vote", "to confirm it. A held address can appeal.")
+                step("arrow.uturn.backward.circle.fill", "The victim asks for it back", "and a second vote returns the funds.")
             }
             if let status {
                 if !status.active {
-                    Section { Text("Theft holds aren't switched on in the network yet. They start after the security audit.").font(.footnote) }
+                    NoteCard(text: "Theft holds aren't switched on in the network yet. They start after the security audit.",
+                             icon: "clock.fill", tint: Brand.warning)
                 }
                 if status.myLocked > 0 {
-                    Section { Text("\(Amount.format(status.myLocked)) EGOC of this wallet is held or bonded right now.").font(.footnote).foregroundStyle(Brand.warning) }
+                    NoteCard(text: "\(Amount.format(status.myLocked)) EGOC of this wallet is held or bonded right now.",
+                             icon: "lock.fill", tint: Brand.warning)
                 }
                 if status.holds.isEmpty {
-                    Section { Text("No holds right now.").font(.footnote).foregroundStyle(Brand.muted) }
+                    VStack(spacing: 8) {
+                        Image(systemName: "hand.raised").font(.system(size: 30, weight: .semibold)).foregroundStyle(Brand.muted)
+                        Text("No holds right now.").font(.subheadline).foregroundStyle(Brand.muted)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 24)
                 }
                 ForEach(status.holds) { h in hold(h, stake: status.myStake, active: status.active) }
             } else if problem == nil {
-                Section { ProgressView().frame(maxWidth: .infinity) }
-            }
-            if let note {
-                Section { Text(note).font(.footnote) }
-            }
-            if let problem {
-                Section { Text(problem).font(.footnote).foregroundStyle(Brand.danger) }
+                ProgressView().tint(Brand.lime).frame(maxWidth: .infinity).padding(.top, 30)
             }
         }
-        .scrollContentBackground(.hidden)
         .refreshable { await load() }
         .task { await load() }
         .alert("Appeal this hold", isPresented: Binding(get: { appealing != nil }, set: { if !$0 { appealing = nil } })) {
@@ -91,49 +90,88 @@ struct HoldsView: View {
         }
     }
 
-    @ViewBuilder
+    private func step(_ icon: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon).foregroundStyle(Brand.lime).frame(width: 22)
+            (Text(title).fontWeight(.semibold).foregroundColor(Brand.text) + Text(" " + detail).foregroundColor(Brand.muted))
+                .font(.footnote)
+        }
+    }
+
+    private func phaseTint(_ phase: String) -> Color {
+        switch phase {
+        case "voting", "return_voting": return Brand.warning
+        case "confirmed": return Brand.danger
+        case "returned": return Brand.mint
+        default: return Brand.muted
+        }
+    }
+
     private func hold(_ h: Holds.Hold, stake: UInt64, active: Bool) -> some View {
-        Section {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(h.caseText).font(.footnote)
-                Text("Victim \(shortAddress(h.victim)) · \(phaseText(h.phase))").font(.caption).foregroundStyle(Brand.muted)
-                ForEach(h.held, id: \.self) { held in
-                    Text("Holds \(Amount.format(held.amount)) EGOC at \(shortAddress(held.address))").font(.caption)
+        GlassCard {
+            HStack {
+                Tag(text: phaseText(h.phase).capitalized, tint: phaseTint(h.phase))
+                Spacer()
+                Text("Victim \(shortAddress(h.victim))").font(.caption).foregroundStyle(Brand.muted)
+            }
+            Text(h.caseText).font(.subheadline).foregroundStyle(Brand.text)
+            ForEach(h.held, id: \.self) { held in
+                HStack {
+                    Image(systemName: "lock.fill").font(.caption).foregroundStyle(Brand.warning)
+                    Text(shortAddress(held.address)).font(.system(.caption, design: .monospaced)).foregroundStyle(Brand.text)
+                    Spacer()
+                    Text("\(Amount.format(held.amount)) EGOC").font(.system(.caption, design: .rounded, weight: .bold)).foregroundStyle(Brand.text)
                 }
-                if h.phase == "voting" || h.phase == "return_voting" {
-                    let t = h.phase == "voting" ? h.confirm : h.ret
-                    Text("Stake: \(Amount.format(t.stakeYes)) yes, \(Amount.format(t.stakeNo)) no · ends \(date(h.phase == "voting" ? h.voteEnds : h.returnEnds))")
-                        .font(.caption).foregroundStyle(Brand.muted)
+            }
+            if h.phase == "voting" || h.phase == "return_voting" {
+                let t = h.phase == "voting" ? h.confirm : h.ret
+                let total = max(Double(t.stakeYes + t.stakeNo), 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    GeometryReader { geo in
+                        HStack(spacing: 2) {
+                            Capsule().fill(Brand.lime).frame(width: geo.size.width * Double(t.stakeYes) / total)
+                            Capsule().fill(Brand.danger.opacity(0.8))
+                        }
+                    }
+                    .frame(height: 8)
+                    HStack {
+                        Text("\(Amount.format(t.stakeYes)) yes").foregroundStyle(Brand.lime)
+                        Text("\(Amount.format(t.stakeNo)) no").foregroundStyle(Brand.danger)
+                        Spacer()
+                        Text("Ends \(date(h.phase == "voting" ? h.voteEnds : h.returnEnds))").foregroundStyle(Brand.muted)
+                    }
+                    .font(.caption)
                 }
             }
             ForEach(h.appeals, id: \.self) { a in
-                Text("Appeal from \(shortAddress(a.address)): \(a.text)").font(.caption).foregroundStyle(Brand.warning)
+                NoteCard(text: "Appeal from \(shortAddress(a.address)): \(a.text)", icon: "text.bubble.fill", tint: Brand.warning)
             }
             if active, let phase = h.openVote {
                 if stake == 0 {
                     Text("Stake EGOC to vote on holds.").font(.caption).foregroundStyle(Brand.muted)
                 } else {
-                    HStack {
+                    HStack(spacing: 10) {
                         Button(phase == Holds.phaseConfirm ? "Hold it" : "Return it") {
                             Task { await run("Voted. Your stake stays locked until the vote ends.") { try await app.voteOnHold(h, phase: phase, yes: true) } }
                         }
-                        Spacer()
-                        Button(phase == Holds.phaseConfirm ? "Release it" : "Don't return", role: .destructive) {
+                        .buttonStyle(OutlineButtonStyle())
+                        Button(phase == Holds.phaseConfirm ? "Release it" : "Don't return") {
                             Task { await run("Voted. Your stake stays locked until the vote ends.") { try await app.voteOnHold(h, phase: phase, yes: false) } }
                         }
+                        .buttonStyle(OutlineButtonStyle(tint: Brand.danger))
                     }
-                    .buttonStyle(.borderless)
                     .disabled(busy)
                 }
             }
             if active, h.canAppeal(app.address) {
-                Button("Appeal: these funds aren't stolen") { appealText = ""; appealing = h }.disabled(busy)
+                Button("Appeal: these funds aren't stolen") { appealText = ""; appealing = h }
+                    .buttonStyle(OutlineButtonStyle(tint: Brand.warning)).disabled(busy)
             }
             if active, h.canOpenReturn(app.address) {
                 Button("Ask for the funds back") {
                     Task { await run("Return vote opened.") { try await app.openReturnVote(h) } }
                 }
-                .disabled(busy)
+                .buttonStyle(GlowButtonStyle()).disabled(busy)
             }
         }
     }
@@ -168,10 +206,12 @@ struct HoldsView: View {
         defer { busy = false }
         do {
             try await work()
+            Haptics.success()
             note = success
             problem = nil
             await load()
         } catch {
+            note = nil
             problem = app.message(for: error)
         }
     }
