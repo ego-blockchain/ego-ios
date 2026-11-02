@@ -165,7 +165,7 @@ struct MarketView: View {
         // ends with them still running.
         async let price = try? app.perform { try await $0.egocPriceUsd() }
         async let market = try? app.perform { try await $0.marketParams() }
-        let fetched: Result<OfferPage, Error>
+        let fetched: Result<EgoKit.OfferPage, Error>
         do {
             fetched = .success(try await app.perform {
                 try await $0.marketOffers(asset: asset, fiat: fiat, side: side, method: method.isEmpty ? nil : method, amountMicro: amount)
