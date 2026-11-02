@@ -140,6 +140,7 @@ struct MainTabs: View {
             .navigationDestination(for: VaultPage.self) { _ in VaultView() }
             .navigationDestination(for: StakingPage.self) { _ in StakingView() }
             .navigationDestination(for: GovernancePage.self) { _ in GovernanceView() }
+            .navigationDestination(for: HoldsPage.self) { _ in HoldsView() }
             .navigationDestination(for: ProposalPage.self) { page in ProposalView(id: page.id) }
             .navigationDestination(for: OfferPage.self) { page in
                 OfferDetailView(listing: page.listing, egocUsd: page.egocUsd, mine: page.mine)

@@ -26,6 +26,7 @@ struct GovernanceView: View {
                     .font(.footnote)
                     .foregroundStyle(Brand.muted)
                 NavigationLink(value: StakingPage()) { Label("Staking", systemImage: "lock.circle") }
+                NavigationLink(value: HoldsPage()) { Label("Theft holds", systemImage: "hand.raised") }
             }
             if let limits, !limits.active {
                 Section { Text("DAO voting isn't on the chain yet.").font(.footnote) }
