@@ -652,8 +652,9 @@ extension View {
     }
 }
 
-/// An outlined button for actions inside a card.
+/// An outlined button for actions inside a card. Red for the ones that stop or remove something.
 struct OutlineButtonStyle: ButtonStyle {
+    var tint: Color = Brand.lime
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
@@ -661,12 +662,52 @@ struct OutlineButtonStyle: ButtonStyle {
             .font(.system(.subheadline, design: .rounded, weight: .bold))
             .frame(maxWidth: .infinity)
             .frame(height: 46)
-            .foregroundStyle(Brand.lime)
-            .background(Brand.lime.opacity(configuration.isPressed ? 0.18 : 0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Brand.lime.opacity(0.4)))
+            .foregroundStyle(tint)
+            .background(tint.opacity(configuration.isPressed ? 0.18 : 0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(tint.opacity(0.4)))
             .opacity(isEnabled ? 1 : 0.4)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+    }
+}
+
+/// A frosted card for a page's column; tinted when it needs attention.
+struct GlassCard<Content: View>: View {
+    var tint: Color?
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) { content() }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background((tint ?? Brand.card).opacity(tint == nil ? 0.6 : 0.14), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke((tint ?? .white).opacity(tint == nil ? 0.1 : 0.4)))
+    }
+}
+
+/// A labelled value in a card, small label over a bold value.
+struct StatTile: View {
+    let label: String
+    let value: String
+    var icon: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                if let icon { Image(systemName: icon).font(.system(size: 10, weight: .bold)) }
+                Text(label.uppercased()).font(.system(size: 10, weight: .bold, design: .rounded)).tracking(0.8)
+            }
+            .foregroundStyle(Brand.muted)
+            Text(value)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(Brand.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

@@ -52,10 +52,20 @@ public enum Vault {
 
     public static func readable(_ error: Error) -> String {
         let text = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+        if text.contains("VAULT_LIMIT"), let left = number(after: "lets ", in: text) {
+            return left == 0
+                ? "Your wallet vault's daily limit is used up, so this can't go out right away. Send it with a delay, or approve it with your second key."
+                : "Your wallet vault lets only \(Amount.format(left)) EGOC more out today. Send less, send it with a delay, or approve it with your second key."
+        }
         return text
             .replacingOccurrences(of: "rejected: ", with: "")
             .replacingOccurrences(of: "VAULT_LIMIT: ", with: "")
             .replacingOccurrences(of: "VAULT_REFUSED: ", with: "")
+    }
+
+    private static func number(after marker: String, in text: String) -> UInt64? {
+        guard let r = text.range(of: marker) else { return nil }
+        return UInt64(text[r.upperBound...].prefix { $0.isNumber })
     }
 
     public struct Settings: Codable, Equatable {

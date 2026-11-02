@@ -607,8 +607,8 @@ final class AppModel: ObservableObject {
         if case GatewayError.rpc(let code, _) = error, code == AppModel.notHere {
             return "The Ego Desktop that connects this iPhone to the network is too old for this. Update Ego Desktop to the latest version, then try again."
         }
-        if let error = error as? LocalizedError, let text = error.errorDescription {
-            return text
+        if let error = error as? LocalizedError, error.errorDescription != nil {
+            return Vault.readable(error)
         }
         return error.localizedDescription
     }

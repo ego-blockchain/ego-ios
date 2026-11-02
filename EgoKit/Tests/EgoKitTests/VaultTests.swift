@@ -83,6 +83,8 @@ final class VaultTests: XCTestCase {
         let e = GatewayError.rpc(-32000, "rejected: VAULT_LIMIT: this wallet's vault lets 5 uEGOC out today")
         XCTAssertTrue(Vault.isOverLimit(e))
         XCTAssertFalse(Vault.isOverLimit(GatewayError.rpc(-32000, "rejected: insufficient balance")))
-        XCTAssertEqual(Vault.readable(e), "this wallet's vault lets 5 uEGOC out today")
+        XCTAssertEqual(Vault.readable(e), "Your wallet vault lets only 0.000005 EGOC more out today. Send less, send it with a delay, or approve it with your second key.")
+        let none = GatewayError.rpc(-32000, "rejected: VAULT_LIMIT: this wallet's vault lets 0 uEGOC out today")
+        XCTAssertTrue(Vault.readable(none).hasPrefix("Your wallet vault's daily limit is used up"))
     }
 }
