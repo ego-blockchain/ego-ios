@@ -292,13 +292,16 @@ public actor GatewayDirectory {
             for g in candidates.prefix(GatewayDirectory.waveSize) {
                 group.addTask { await probe(g) ? g : nil }
             }
-            for await result in group {
-                if let result {
+            // Wait for every probe before returning: returning while some were still
+            // running is the likeliest cause of the iOS 27.2 crash App Review hit.
+            var winner: Gateway?
+            while let result = await group.next() {
+                if winner == nil, let result {
+                    winner = result
                     group.cancelAll()
-                    return result
                 }
             }
-            return nil
+            return winner
         }
         for g in candidates.prefix(GatewayDirectory.waveSize) where g != winner {
             localFailures[g.endpoint] = now
@@ -343,13 +346,16 @@ public actor GatewayDirectory {
             for a in wave {
                 group.addTask { await probe(a) ? a : nil }
             }
-            for await result in group {
-                if let result {
+            // Wait for every probe before returning: returning while some were still
+            // running is the likeliest cause of the iOS 27.2 crash App Review hit.
+            var winner: GatewayAnnouncement?
+            while let result = await group.next() {
+                if winner == nil, let result {
+                    winner = result
                     group.cancelAll()
-                    return result
                 }
             }
-            return nil
+            return winner
         }
     }
 

@@ -161,13 +161,21 @@ struct MarketView: View {
     private func load() async {
         let (side, asset, fiat, method, amount) = (makerSide, asset, fiat, method, amountMicro)
         let key = reloadKey
+        // Both async lets are awaited before anything can throw, so the scope never
+        // ends with them still running.
+        async let price = try? app.perform { try await $0.egocPriceUsd() }
+        async let market = try? app.perform { try await $0.marketParams() }
+        let fetched: Result<OfferPage, Error>
         do {
-            async let price = try? app.perform { try await $0.egocPriceUsd() }
-            async let market = try? app.perform { try await $0.marketParams() }
-            let page = try await app.perform {
+            fetched = .success(try await app.perform {
                 try await $0.marketOffers(asset: asset, fiat: fiat, side: side, method: method.isEmpty ? nil : method, amountMicro: amount)
-            }
-            let (p, m) = await (price, market)
+            })
+        } catch {
+            fetched = .failure(error)
+        }
+        let (p, m) = await (price, market)
+        do {
+            let page = try fetched.get()
             guard !Task.isCancelled, key == reloadKey else { return }
             if let p { egocUsd = p }
             if let m { params = m }
