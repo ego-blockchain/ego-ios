@@ -10,12 +10,39 @@ import UniformTypeIdentifiers
 final class ChatModel: ObservableObject {
     /// The feed as the network sent it.
     @Published private var fetched: ChatFeed?
-    /// What this phone shows: the feed without people blocked here.
+    /// Older messages loaded with "Load earlier messages", oldest first.
+    @Published private var earlier: [ChatPostView] = []
+    @Published private(set) var loadingEarlier = false
+    /// The network has nothing older than what's shown.
+    @Published private(set) var reachedStart = false
+
+    /// What this phone shows: earlier pages, then the latest feed, without people blocked here.
     var feed: ChatFeed? {
         guard var shown = fetched else { return nil }
+        let newest = shown.posts.first?.ts ?? .max
+        shown.posts = earlier.filter { $0.ts < newest } + shown.posts
         let blocklist = ChatBlocklist.shared
         shown.posts.removeAll { blocklist.contains($0.from) }
         return shown
+    }
+
+    /// Loads the page of messages before the oldest one shown.
+    func loadEarlier(_ app: AppModel) async {
+        guard !loadingEarlier, !reachedStart, let client = chatGateway,
+              let before = (earlier.first ?? fetched?.posts.first)?.ts else { return }
+        loadingEarlier = true
+        defer { loadingEarlier = false }
+        do {
+            let page = try await client.chatFeed(viewer: app.address, before: before)
+            let older = page.posts.filter { $0.ts < before }
+            if older.isEmpty {
+                reachedStart = true
+            } else {
+                earlier = older + earlier
+            }
+        } catch {
+            problem = app.message(for: error)
+        }
     }
     @Published var problem: String?
     @Published var sending = false
@@ -234,6 +261,21 @@ struct ChatView: View {
                                         .font(.subheadline)
                                         .foregroundStyle(Brand.muted)
                                         .padding(.top, 30)
+                                }
+                                if !feed.posts.isEmpty && !chat.reachedStart {
+                                    Button {
+                                        Task { await chat.loadEarlier(app) }
+                                    } label: {
+                                        if chat.loadingEarlier {
+                                            ProgressView()
+                                        } else {
+                                            Label("Load earlier messages", systemImage: "arrow.up.circle")
+                                                .font(.footnote.weight(.semibold))
+                                        }
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .foregroundStyle(Brand.muted)
+                                    .padding(.vertical, 10)
                                 }
                                 ForEach(Array(feed.posts.enumerated()), id: \.element.id) { i, post in
                                     let previous = i > 0 ? feed.posts[i - 1] : nil
@@ -988,7 +1030,7 @@ struct ChatProfileView: View {
         .confirmationDialog("Delete your chat profile?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete chat profile", role: .destructive) { Task { await deleteProfile() } }
         } message: {
-            Text("Your name and picture are removed from the chat everywhere, and your messages from the last hour are deleted. Older messages can't be taken back on the network, so they disappear on their own within 30 days. Your wallet isn't affected.")
+            Text("Your name and picture are removed from the chat everywhere, and your messages from the last hour are deleted. Older messages can't be taken back on the network, so they disappear on their own within a year. Your wallet isn't affected.")
         }
         .navigationTitle("Chat profile")
         .navigationBarTitleDisplayMode(.inline)
