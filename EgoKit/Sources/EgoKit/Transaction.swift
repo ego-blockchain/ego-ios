@@ -25,6 +25,10 @@ public struct SignedTransaction: Codable, Equatable {
     public var callArgs: String = ""
     /// The vault's second-key approval, outside the owner's signature.
     public var vaultCosig: String = ""
+    /// The wallet's Dilithium (ML-DSA-44) public key and its signature over the same
+    /// bytes as `signature`, both hex. Empty in transactions saved by older builds.
+    public var dilithiumPubkey: String = ""
+    public var dilithiumSignature: String = ""
 
     enum CodingKeys: String, CodingKey {
         case hash, from, to, amount, memo, timestamp, signature, status, nonce
@@ -35,6 +39,8 @@ public struct SignedTransaction: Codable, Equatable {
         case chainId = "chain_id"
         case callArgs = "call_args"
         case vaultCosig = "vault_cosig"
+        case dilithiumPubkey = "dilithium_pubkey"
+        case dilithiumSignature = "dilithium_signature"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -55,6 +61,8 @@ public struct SignedTransaction: Codable, Equatable {
         try c.encode(chainId, forKey: .chainId)
         if !callArgs.isEmpty { try c.encode(callArgs, forKey: .callArgs) }
         if !vaultCosig.isEmpty { try c.encode(vaultCosig, forKey: .vaultCosig) }
+        if !dilithiumPubkey.isEmpty { try c.encode(dilithiumPubkey, forKey: .dilithiumPubkey) }
+        if !dilithiumSignature.isEmpty { try c.encode(dilithiumSignature, forKey: .dilithiumSignature) }
     }
 }
 
@@ -77,7 +85,9 @@ extension SignedTransaction {
             txVersion: try c.decode(Int.self, forKey: .txVersion),
             chainId: try c.decode(Int.self, forKey: .chainId),
             callArgs: try c.decodeIfPresent(String.self, forKey: .callArgs) ?? "",
-            vaultCosig: try c.decodeIfPresent(String.self, forKey: .vaultCosig) ?? ""
+            vaultCosig: try c.decodeIfPresent(String.self, forKey: .vaultCosig) ?? "",
+            dilithiumPubkey: try c.decodeIfPresent(String.self, forKey: .dilithiumPubkey) ?? "",
+            dilithiumSignature: try c.decodeIfPresent(String.self, forKey: .dilithiumSignature) ?? ""
         )
     }
 }
@@ -191,6 +201,7 @@ public enum Transactions {
                              fee: fee, priorityFee: 0, txType: txType, memo: memo)
             : signingBytesV2(from: from, to: to, amount: amount, nonce: nonce, timestamp: timestamp, chainId: EgoNetwork.chainId, memo: memo)
         let signature = try key.sign(bytes)
+        let dilithium = try Dilithium.sign(seed: key.seed, message: bytes)
         return SignedTransaction(
             hash: "0x" + Hex.encode(Blake2s.hash(bytes)),
             from: from,
@@ -205,7 +216,9 @@ public enum Transactions {
             feeUegoc: fee,
             txType: txType,
             txVersion: version >= 3 ? 3 : 2,
-            chainId: Int(EgoNetwork.chainId)
+            chainId: Int(EgoNetwork.chainId),
+            dilithiumPubkey: Hex.encode(dilithium.publicKey),
+            dilithiumSignature: Hex.encode(dilithium.signature)
         )
     }
 }
