@@ -287,15 +287,16 @@ struct PresaleView: View {
             if let made {
                 doneContent(made)
             } else {
-                priceCard.reveal(0.02)
-                WhyEgo()
-                GlassSegments(selection: $method, options: Method.allCases) { $0.rawValue }.reveal(0.06)
+                // How to pay and how much come first; the price and the details follow.
+                GlassSegments(selection: $method, options: Method.allCases) { $0.rawValue }
                 Group {
                     if method == .crypto { cryptoContent } else { cardContent }
                 }
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                 // A card payer needs the password only once the payment has gone through.
                 if method == .crypto || cardPaid { passwordCard }
+                priceCard.reveal(0.06)
+                WhyEgo()
                 PresaleSteps()
                 NoteCard(text: "Ego is on public testnet. Mainnet has no launch date yet and the security audit is still planned. EGOC has no market price, so only spend what you can afford to lose.",
                          icon: "exclamationmark.shield.fill", tint: Brand.warning)

@@ -171,7 +171,9 @@ struct MainTabs: View {
         // Checks the plan on every unlock, so an automatic renewal doesn't wait for the Storage tab.
         .task {
             storage.attach(app)
+            async let market: Void = MarketView.warmUp(app)
             await storage.refresh()
+            await market
         }
         .onChange(of: app.phase) { _, _ in storage.attach(app) }
     }

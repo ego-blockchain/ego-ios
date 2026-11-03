@@ -12,10 +12,27 @@ struct MarketView: View {
     @State private var amountText = ""
     @State private var offers: [OfferListing]?
     @State private var next: String?
-    @State private var egocUsd: Double = 0
-    @State private var params: MarketParams?
+    @State private var egocUsd: Double = MarketView.lastPrice
+    @State private var params: MarketParams? = MarketView.lastParams
+    /// What the tab showed last, so coming back to it doesn't start from "Connecting…" again.
+    @MainActor static var lastPrice: Double = 0
+    @MainActor static var lastParams: MarketParams?
+    @MainActor private static var lastOffers: [String: [OfferListing]] = [:]
     @State private var problem: String?
     @State private var loadingMore = false
+
+    /// Fetches the market's numbers before the tab is first opened, so it arrives ready.
+    @MainActor static func warmUp(_ app: AppModel) async {
+        // Right after unlocking the phone may not have found a gateway yet, so it tries a few times.
+        for _ in 0..<4 where lastParams == nil {
+            async let price = try? app.perform { try await $0.egocPriceUsd() }
+            async let market = try? app.perform { try await $0.marketParams() }
+            let (p, m) = await (price, market)
+            if let p { lastPrice = p }
+            if let m { lastParams = m; return }
+            try? await Task.sleep(for: .seconds(5))
+        }
+    }
 
     /// Taking a sell offer is buying, so the book shows the other side.
     private var makerSide: MarketSide { takerSide == .buy ? .sell : .buy }
@@ -41,6 +58,11 @@ struct MarketView: View {
                         filters
                         if let problem { ProblemBanner(text: problem) }
                         book
+                        // Below the offers, so the page doesn't jump when the market's state arrives.
+                        if let params, !params.active {
+                            NoteCard(text: "The P2P market isn't switched on for this network yet. You can look around; posting offers and trading open when the network activates it.",
+                                     icon: "clock.fill", tint: Brand.amber)
+                        }
                         NoteCard(text: "The coins wait in escrow until the seller confirms the payment, and an arbiter settles disputes. To trade, open P2P Trade in Ego Desktop with the same wallet.",
                                  icon: "lock.shield.fill", tint: Brand.amber)
                     }
@@ -53,7 +75,10 @@ struct MarketView: View {
             .task(id: reloadKey) {
                 // Coming back to the tab keeps the offers on screen and refreshes them quietly;
                 // only a change of filter clears the list.
-                if loadedKey != reloadKey {
+                // The first visit loads at once; the short wait only spares the gateway while filters change.
+                if loadedKey == nil {
+                    offers = MarketView.lastOffers[reloadKey]
+                } else if loadedKey != reloadKey {
                     offers = nil
                     next = nil
                     try? await Task.sleep(for: .milliseconds(250))
@@ -177,9 +202,10 @@ struct MarketView: View {
         do {
             let page = try fetched.get()
             guard !Task.isCancelled, key == reloadKey else { return }
-            if let p { egocUsd = p }
-            if let m { params = m }
+            if let p { egocUsd = p; MarketView.lastPrice = p }
+            if let m { params = m; MarketView.lastParams = m }
             offers = page.offers.filter(\.open)
+            MarketView.lastOffers[key] = offers
             next = page.next
             problem = nil
         } catch {
@@ -251,11 +277,6 @@ struct MarketHero: View {
             HStack(spacing: 10) {
                 stat("In escrow", params.map { "\(Egoc.format(Double($0.escrowHeldUegoc), digits: 2)) EGOC" } ?? "—", icon: "lock.fill")
                 stat("Open trades", params.map { "\($0.activeTrades)" } ?? "—", icon: "person.2.fill")
-            }
-            if let params, !params.active {
-                Text("The P2P market isn't switched on for this network yet. You can look around; posting offers and trading open when the network activates it.")
-                    .font(.caption)
-                    .foregroundStyle(Brand.amber)
             }
         }
         .padding(18)
