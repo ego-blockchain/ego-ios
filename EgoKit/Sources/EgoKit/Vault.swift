@@ -54,8 +54,8 @@ public enum Vault {
         let text = (error as? LocalizedError)?.errorDescription ?? "\(error)"
         if text.contains("VAULT_LIMIT"), let left = number(after: "lets ", in: text) {
             return left == 0
-                ? "Your wallet vault's daily limit is used up, so this can't go out right away. Send it with a delay, or approve it with your second key."
-                : "Your wallet vault lets only \(Amount.format(left)) EGOC more out today. Send less, send it with a delay, or approve it with your second key."
+                ? "You've reached today's limit in your wallet vault."
+                : "Your wallet vault lets only \(Amount.format(left)) EGOC more out today."
         }
         return text
             .replacingOccurrences(of: "rejected: ", with: "")

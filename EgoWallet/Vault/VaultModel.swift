@@ -5,18 +5,15 @@ struct VaultPage: Hashable {}
 
 enum VaultFlowError: LocalizedError {
     case noVault
-    case nothingToSweep
 
     var errorDescription: String? {
         switch self {
         case .noVault: return "This wallet has no vault yet."
-        case .nothingToSweep: return "There is nothing to sweep."
         }
     }
 }
 
-/// The wallet vault through a gateway: status, settings, waiting sends, freeze, sweep, and
-/// approving another wallet's request when this iPhone is its second key.
+/// The wallet vault through a gateway: status, the daily limit, waiting sends and unfreezing.
 extension AppModel {
     private var mineKey: String { "vault.mine.\(address)" }
     private var sentKey: String { "vault.sent.\(address)" }
@@ -50,16 +47,8 @@ extension AppModel {
         _ = try await vaultOperation("vault_set", Vault.SetBody(settings: settings))
     }
 
-    func freezeVault(owner: String? = nil) async throws {
-        _ = try await vaultOperation("vault_freeze", Vault.OwnerBody(owner: owner ?? address))
-    }
-
     func unfreezeVault() async throws {
         _ = try await vaultOperation("vault_unfreeze", Vault.EmptyBody())
-    }
-
-    func turnVaultOff() async throws {
-        _ = try await vaultOperation("vault_off", Vault.EmptyBody())
     }
 
     func cancelInVault(owner: String? = nil, target: String) async throws {
@@ -73,18 +62,6 @@ extension AppModel {
         let hash = try await vaultOperation("vault_queue", Vault.QueueBody(to: recipient, amount: amount))
         vaultMine = vaultMine + [Vault.queueId(txHash: hash)]
         return vault.settings.delay(for: amount)
-    }
-
-    /// Sends everything to the recovery address in one step. Works even while frozen.
-    func sweepVault(to recovery: String) async throws -> String {
-        guard let key else { throw WalletError.locked }
-        let address = key.address
-        let info = try await perform { try await $0.nonce(of: address) }
-        let have = try await perform { try await $0.balance(of: address) }.uegoc
-        guard have > info.feeUegoc else { throw VaultFlowError.nothingToSweep }
-        let tx = try Transactions.transfer(key: key, to: recovery, amount: have - info.feeUegoc, nonce: info.next,
-                                           fee: info.feeUegoc, memo: Vault.sweepMemo, version: max(3, info.txVersion))
-        return try await submit(tx)
     }
 
     /// Sends this iPhone's waiting sends whose wait is over. Returns how many went out.
@@ -112,14 +89,5 @@ extension AppModel {
         }
         vaultSent = sent
         return count
-    }
-
-    /// Approves another wallet's request with this wallet's key, when this wallet is that vault's second key.
-    func approveVaultRequest(_ request: Vault.ApprovalRequest) async throws -> String {
-        guard let key else { throw WalletError.locked }
-        let owner = request.from
-        let theirs = try await perform { try await $0.vaultStatus(of: owner) }
-        guard let secondKey = theirs.vault?.settings.secondKey, !secondKey.isEmpty else { throw EgoKit.VaultError.notSecondKey }
-        return try Vault.approve(request, with: key, secondKey: secondKey)
     }
 }

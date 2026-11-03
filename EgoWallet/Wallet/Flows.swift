@@ -63,7 +63,7 @@ struct SendView: View {
             }
             if let problem { ProblemBanner(text: problem) }
             if overLimit && delayedHours == nil {
-                NoteCard(text: "This is above your vault's daily limit. Send it with your vault's delay, or approve it from your second key in Ego Desktop.", icon: "lock.shield.fill", tint: Brand.warning)
+                NoteCard(text: "This is more than your daily limit lets out today. You can still send it; it goes out after your vault's wait.", icon: "lock.shield.fill", tint: Brand.warning)
             }
         } footer: {
             if overLimit, delayedHours == nil, let amount {

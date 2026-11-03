@@ -50,16 +50,6 @@ extension AppModel {
                                 "A change to your vault lands soon. If you didn't ask for it, open Ego Wallet and cancel it."))
                 }
             }
-            for h in status.helping {
-                for q in h.queue {
-                    out.append(("guard/\(q.id)", "A wallet you guard is sending",
-                                "\(Amount.format(q.amount)) EGOC from \(shortAddress(h.owner)) is waiting. Freeze it or cancel it if it looks wrong."))
-                }
-                if let p = h.pending {
-                    out.append(("guardchange/\(h.owner)/\(p.at)", "A vault you guard is about to change",
-                                "\(shortAddress(h.owner))'s vault changes soon. Cancel it if it looks wrong."))
-                }
-            }
         }
         for secret in daoSecrets {
             guard let p = try? await perform({ try await $0.daoProposal(secret.id, voter: owner) }).proposal,
