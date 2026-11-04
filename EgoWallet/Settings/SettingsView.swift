@@ -22,7 +22,6 @@ struct SettingsView: View {
                         PageTitle("Settings")
                         VStack(spacing: 10) {
                             link(ProfilePage(), "person.crop.circle.fill", Brand.violet, "Chat profile", "Your name and picture in the community chat")
-                            link(VaultPage(), "lock.shield.fill", Brand.warning, "Wallet vault", "Set the most that can leave in a day")
                             link(GovernancePage(), "building.columns.fill", Brand.lime, "Governance", "Vote on proposals and create your own")
                             link(StakingPage(), "lock.circle.fill", Brand.mint, "Staking", "Lock EGOC to secure the network and to vote")
                         }

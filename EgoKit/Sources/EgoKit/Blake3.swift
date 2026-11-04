@@ -1,7 +1,7 @@
 import Foundation
 
 /// BLAKE3 in hash mode with a 32-byte output, following the reference implementation.
-/// The node uses it to bind a transaction's body to its memo and to name waiting vault sends.
+/// The node uses it to bind a transaction's body to its memo.
 public enum Blake3 {
     static let iv: [UInt32] = [
         0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,

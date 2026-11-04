@@ -21,10 +21,8 @@ public struct SignedTransaction: Codable, Equatable {
     public let txType: String
     public let txVersion: Int
     public let chainId: Int
-    /// The body of a DAO, vault or hold operation. Not signed itself: the signed memo commits to it.
+    /// The body of a DAO or hold operation. Not signed itself: the signed memo commits to it.
     public var callArgs: String = ""
-    /// The vault's second-key approval, outside the owner's signature.
-    public var vaultCosig: String = ""
     /// The wallet's Dilithium (ML-DSA-44) public key and its signature over the same
     /// bytes as `signature`, both hex. Empty in transactions saved by older builds.
     public var dilithiumPubkey: String = ""
@@ -38,7 +36,6 @@ public struct SignedTransaction: Codable, Equatable {
         case txVersion = "tx_version"
         case chainId = "chain_id"
         case callArgs = "call_args"
-        case vaultCosig = "vault_cosig"
         case dilithiumPubkey = "dilithium_pubkey"
         case dilithiumSignature = "dilithium_signature"
     }
@@ -60,7 +57,6 @@ public struct SignedTransaction: Codable, Equatable {
         try c.encode(txVersion, forKey: .txVersion)
         try c.encode(chainId, forKey: .chainId)
         if !callArgs.isEmpty { try c.encode(callArgs, forKey: .callArgs) }
-        if !vaultCosig.isEmpty { try c.encode(vaultCosig, forKey: .vaultCosig) }
         if !dilithiumPubkey.isEmpty { try c.encode(dilithiumPubkey, forKey: .dilithiumPubkey) }
         if !dilithiumSignature.isEmpty { try c.encode(dilithiumSignature, forKey: .dilithiumSignature) }
     }
@@ -85,7 +81,6 @@ extension SignedTransaction {
             txVersion: try c.decode(Int.self, forKey: .txVersion),
             chainId: try c.decode(Int.self, forKey: .chainId),
             callArgs: try c.decodeIfPresent(String.self, forKey: .callArgs) ?? "",
-            vaultCosig: try c.decodeIfPresent(String.self, forKey: .vaultCosig) ?? "",
             dilithiumPubkey: try c.decodeIfPresent(String.self, forKey: .dilithiumPubkey) ?? "",
             dilithiumSignature: try c.decodeIfPresent(String.self, forKey: .dilithiumSignature) ?? ""
         )
