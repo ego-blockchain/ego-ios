@@ -442,7 +442,8 @@ final class AppModel: ObservableObject {
     }
 
     /// The Earnings page of the Ego Desktop that uses this wallet, asked
-    /// directly from that computer. Other gateways can't answer it.
+    /// directly from that computer. When that fails, other gateways are asked
+    /// to forward the request to it over the network.
     func myNodeEarnings() async -> NodeLookup {
         guard let key else { return .unreachable(message(for: WalletError.locked)) }
         var own = await directory.gateways(runBy: key.address)
@@ -450,8 +451,7 @@ final class AppModel: ObservableObject {
             await directory.merge(more)
             own = await directory.gateways(runBy: key.address)
         }
-        guard !own.isEmpty else { return .notFound }
-        var problem = ""
+        var problem: String?
         for gateway in own.prefix(3) {
             do {
                 return .found(try await GatewayClient(gateway: gateway, timeout: 8).nodeEarnings(key: key))
@@ -459,8 +459,29 @@ final class AppModel: ObservableObject {
                 problem = message(for: error)
             }
         }
-        return .unreachable(problem)
+        // A forwarding gateway's "your desktop isn't there" outranks a network error from our own.
+        let tried = Set(own.prefix(3).map(\.endpoint))
+        let forwarders = await directory.known.compactMap(\.announcement.gateway)
+            .filter { !tried.contains($0.endpoint) }
+            .prefix(AppModel.notHereTries)
+        for gateway in forwarders {
+            do {
+                return .found(try await GatewayClient(gateway: gateway, timeout: 8).nodeEarnings(key: key))
+            } catch GatewayError.rpc(let code, _) where code == AppModel.cannotForward || code == AppModel.notHere {
+                continue
+            } catch GatewayError.rpc(let code, let message) where code == AppModel.desktopAbsent {
+                return .unreachable(message)
+            } catch {
+                problem = problem ?? message(for: error)
+            }
+        }
+        return problem.map(NodeLookup.unreachable) ?? .notFound
     }
+
+    /// node.earnings from a gateway too old to forward it to the wallet's own Ego Desktop.
+    static let cannotForward = -32003
+    /// node.earnings forwarded, but the wallet's Ego Desktop is offline or didn't answer.
+    static let desktopAbsent = -32004
 
     func rewards() async throws -> RewardsSummary {
         let address = self.address
