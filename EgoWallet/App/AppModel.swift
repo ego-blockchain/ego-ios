@@ -253,6 +253,9 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// EGUSD that queued payments from `owner` will take.
+    func heldCredits(from owner: String) -> UInt64 { outbox.committed(.egusd, from: owner) }
+
     var spendableCredits: UInt64? {
         credits.map { c in
             let held = outbox.committed(.egusd, from: address)

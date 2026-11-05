@@ -68,6 +68,20 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(EgoStorage.quotaBytes(sub, now: month + EgoStorage.graceSeconds + 1), EgoStorage.freeBytes)
     }
 
+    func testRenewalWarningCoversTheLastTenDaysOfAPaidPlan() {
+        let sub = EgoStorage.subscription(in: [egusd("credits_pay:199:plan:Pro:monthly", at: 0)], of: me, egocPriceMicroUsd: nil)!
+        let end = sub.expiresAt
+        XCTAssertFalse(sub.renewsSoon(now: end - 10 * 86_400 - 1))
+        XCTAssertTrue(sub.renewsSoon(now: end - 10 * 86_400))
+        XCTAssertTrue(sub.renewsSoon(now: end - 1))
+        XCTAssertFalse(sub.renewsSoon(now: end), "once it ends, auto-renew takes over")
+        XCTAssertEqual(sub.renewalShortfall(credits: 150), 49)
+        XCTAssertNil(sub.renewalShortfall(credits: 199))
+
+        let unconfirmed = EgoStorage.subscription(in: [egusd("credits_pay:199:plan:Pro:monthly", at: 0, confirmed: false)], of: me, egocPriceMicroUsd: nil)!
+        XCTAssertFalse(unconfirmed.renewsSoon(now: end - 1))
+    }
+
     func testUnconfirmedPaymentDoesNotRaiseTheQuotaYet() {
         let sub = EgoStorage.subscription(in: [egusd("credits_pay:199:plan:Pro:monthly", at: 0, confirmed: false)], of: me, egocPriceMicroUsd: nil)!
         XCTAssertFalse(sub.confirmed)

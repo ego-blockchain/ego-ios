@@ -18,6 +18,8 @@ public enum EgoStorage {
     public static let freeBytes: UInt64 = 5_000_000_000
     /// A lapsed plan keeps its space this long, as on Ego Desktop.
     public static let graceSeconds: Int64 = 30 * 86_400
+    /// How long before a paid plan renews the owner hears that their EGUSD won't cover it.
+    public static let renewWarningSeconds: Int64 = 10 * 86_400
     public static let blockSize = 256 * 1024
     public static let maxFileBytes = 250 * 1024 * 1024
 
@@ -60,6 +62,17 @@ public enum EgoStorage {
         public var expiresAt: Int64 { paidAt + billing.seconds }
         public func active(now: Int64) -> Bool { now < expiresAt }
         public func inGrace(now: Int64) -> Bool { !active(now: now) && now < expiresAt + EgoStorage.graceSeconds }
+
+        /// A paid plan in its last days, when a renewal it can't afford should be flagged.
+        public func renewsSoon(now: Int64) -> Bool {
+            confirmed && !plan.isFree && active(now: now) && now >= expiresAt - EgoStorage.renewWarningSeconds
+        }
+
+        /// The EGUSD credits missing to renew, if `credits` won't cover it.
+        public func renewalShortfall(credits: UInt64) -> UInt64? {
+            let cost = plan.credits(billing)
+            return credits < cost ? cost - credits : nil
+        }
     }
 
     /// The memo of an EGUSD plan payment, as Ego Desktop's subscribe_storage_plan writes it.

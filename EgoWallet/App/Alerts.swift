@@ -38,7 +38,35 @@ extension AppModel {
             out.append(("reveal/\(secret.id)/\(secret.isCreator)", "Time to reveal your answers",
                         "Voting on \"\(p.title)\" ended. Open Governance in Ego Wallet so your answers count."))
         }
+        out += await storageAlerts(owner: owner, now: now)
         return out
+    }
+
+    /// Storage alerts while auto-renew is on. Each id names the plan period, so each alerts once:
+    /// - in the last 10 days, when the wallet's EGUSD won't cover the renewal;
+    /// - once the plan has ended, because only an open, unlocked Ego Wallet can pay the renewal.
+    private func storageAlerts(owner: String, now: Int64) async -> [(id: String, title: String, body: String)] {
+        guard StorageStore.autoRenewOn(owner),
+              let history = try? await perform({ try await $0.history(of: owner, limit: AppModel.historyMax) }) else { return [] }
+        let price = try? await egocPriceMicroUsd()
+        guard let s = EgoStorage.subscription(in: history, of: owner, egocPriceMicroUsd: price), !s.plan.isFree,
+              s.renewsSoon(now: now) || (s.confirmed && s.inGrace(now: now)),
+              let have = try? await perform({ try await $0.credits(of: owner).credits }) else { return [] }
+        let held = heldCredits(from: owner)
+        let spendable = have > held ? have - held : 0
+        let short = s.renewalShortfall(credits: spendable) != nil
+        let cost = EGUSD.format(s.plan.credits(s.billing))
+        let date = Date(timeIntervalSince1970: TimeInterval(s.expiresAt)).formatted(date: .abbreviated, time: .omitted)
+        if s.renewsSoon(now: now) {
+            guard short else { return [] }
+            return [("storage-renew/\(s.expiresAt)", "Not enough EGUSD to renew Storage",
+                     "Your \(s.plan.name) plan renews on \(date) for \(cost) EGUSD, and you have \(EGUSD.format(spendable)). Convert some EGOC to EGUSD in Ego Wallet before then.")]
+        }
+        let keeps = Date(timeIntervalSince1970: TimeInterval(s.expiresAt + EgoStorage.graceSeconds)).formatted(date: .abbreviated, time: .omitted)
+        return [("storage-ended/\(s.expiresAt)", "Open Ego Wallet to renew Storage",
+                 short
+                 ? "Your \(s.plan.name) plan ended. Renewing takes \(cost) EGUSD and you have \(EGUSD.format(spendable)): convert some EGOC to EGUSD, and it renews when you open Ego Wallet. Your files keep their space until \(keeps)."
+                 : "Your \(s.plan.name) plan ended. Open Ego Wallet to renew it for \(cost) EGUSD. Your files keep their space until \(keeps).")]
     }
 
     /// Runs in the background: posts each new alert once.

@@ -75,7 +75,7 @@ final class StorageStore: ObservableObject {
         planChosen = UserDefaults.standard.bool(forKey: planChosenKey) || !files.isEmpty
         kept = Set(UserDefaults.standard.stringArray(forKey: keptKey) ?? [])
         optimize = UserDefaults.standard.object(forKey: optimizeKey) as? Bool ?? true
-        autoRenew = UserDefaults.standard.object(forKey: autoRenewKey) as? Bool ?? true
+        autoRenew = Self.autoRenewOn(owner)
         scanDevice()
     }
 
@@ -83,7 +83,12 @@ final class StorageStore: ObservableObject {
     private var keptKey: String { "storage.kept.\(owner)" }
     private var optimizeKey: String { "storage.optimize.\(owner)" }
     private var openedAtKey: String { "storage.openedAt.\(owner)" }
-    private var autoRenewKey: String { "storage.autoRenew.\(owner)" }
+    private var autoRenewKey: String { Self.autoRenewKey(owner) }
+    /// Read by background alerts too, which run without a StorageStore.
+    nonisolated static func autoRenewKey(_ owner: String) -> String { "storage.autoRenew.\(owner)" }
+    nonisolated static func autoRenewOn(_ owner: String) -> Bool {
+        UserDefaults.standard.object(forKey: autoRenewKey(owner)) as? Bool ?? true
+    }
     /// The end date of the period a renewal was last paid for, so one period is never paid twice.
     private var renewedForKey: String { "storage.renewedFor.\(owner)" }
 
@@ -123,6 +128,8 @@ final class StorageStore: ObservableObject {
             subscription = EgoStorage.subscription(in: h, of: owner, egocPriceMicroUsd: p ?? priceMicroUsd)
             subscriptionChecked = true
             if subscription != nil && !planChosen { chooseFree() }
+            // Plans bought before renewal warnings existed: ask now so the 10-day warning can reach them.
+            if autoRenew, subscription.map({ !$0.plan.isFree }) == true { app.askForAlerts() }
             await renewIfDue()
         }
         problem = (c == nil && h == nil) ? "Couldn't reach the Ego network. Your files on this iPhone still open." : nil
@@ -291,6 +298,7 @@ final class StorageStore: ObservableObject {
         guard let app else { throw WalletError.locked }
         let hash = try await app.payStoragePlan(plan, billing: billing)
         setAutoRenew(true)
+        app.askForAlerts()
         chooseFree()
         await refresh()
         return hash
@@ -307,12 +315,23 @@ final class StorageStore: ObservableObject {
     /// so renewing after the end (while the 30-day grace keeps the space) loses no days.
     /// The wallet signs it, so this happens when Ego Wallet is open and unlocked.
     func renewIfDue() async {
-        guard autoRenew, let app, app.key != nil, let s = subscription, s.confirmed, !s.plan.isFree,
-              !s.active(now: now), s.inGrace(now: now) else { return }
-        let renewedFor = Int64(UserDefaults.standard.integer(forKey: renewedForKey))
-        guard renewedFor != s.expiresAt else { return }
+        guard autoRenew, let app, let s = subscription, s.confirmed, !s.plan.isFree else { return }
         let cost = s.plan.credits(s.billing)
         let have = app.spendableCredits ?? 0
+        if s.active(now: now) {
+            // In the last 10 days, say so if the wallet can't cover the renewal.
+            // Background alerts send the same warning while Ego Wallet is closed.
+            if s.renewsSoon(now: now), let known = app.spendableCredits, s.renewalShortfall(credits: known) != nil {
+                let date = Date(timeIntervalSince1970: TimeInterval(s.expiresAt)).formatted(date: .abbreviated, time: .omitted)
+                renewNote = "\(s.plan.name) renews on \(date) for \(EGUSD.format(cost)) EGUSD and you have \(EGUSD.format(known)). Convert some EGOC to EGUSD before then so your space doesn't lapse."
+            } else {
+                renewNote = nil
+            }
+            return
+        }
+        guard app.key != nil, s.inGrace(now: now) else { return }
+        let renewedFor = Int64(UserDefaults.standard.integer(forKey: renewedForKey))
+        guard renewedFor != s.expiresAt else { return }
         guard have >= cost else {
             renewNote = "Auto-renew is waiting: \(s.plan.name) needs \(EGUSD.format(cost)) EGUSD and you have \(EGUSD.format(have)). Convert some EGOC to EGUSD."
             return
