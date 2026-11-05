@@ -54,7 +54,7 @@ struct PlansPage: View {
         GlassPage {
             if let paidHash {
                 SuccessBurst(title: "\(plan.name) plan paid", subtitle: "Your space grows to \(sizeLabel(plan.gb)) as soon as the network confirms the payment, usually within seconds.")
-                HashCard(hash: paidHash)
+                HashCard(hash: paidHash, explorer: EgoScan.tx(paidHash))
                 Button("Open my storage") { finish() }.buttonStyle(GlowButtonStyle())
             } else {
                 header.reveal(0)

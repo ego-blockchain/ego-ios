@@ -345,6 +345,7 @@ struct TransactionDetailView: View {
     let item: HistoryItem
     let me: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @State private var copied: String?
 
     var body: some View {
@@ -363,6 +364,9 @@ struct TransactionDetailView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background((item.blockHeight == nil ? Brand.warning : Brand.mint).opacity(0.12), in: Capsule())
+            .onTapGesture {
+                if let h = item.blockHeight, let url = EgoScan.block(h) { openURL(url) }
+            }
             .reveal(0.02)
             SummaryCard(rows: [
                 .init(label: "Date", value: Date(timeIntervalSince1970: TimeInterval(item.timestamp)).formatted(date: .abbreviated, time: .standard)),
@@ -370,20 +374,25 @@ struct TransactionDetailView: View {
               + ((item.memo.map { !$0.isEmpty } ?? false) && item.txType != "credits_mint" && item.txType != "credits_pay"
                  ? [.init(label: "Memo", value: item.memo ?? "")] : []))
             .reveal(0.06)
-            copyable("From", item.from, mine: item.from == me).reveal(0.1)
-            copyable("To", item.to, mine: item.to == me).reveal(0.13)
-            copyable("Transaction", item.hash, mine: false).reveal(0.16)
+            copyable("From", item.from, mine: item.from == me, link: EgoScan.address(item.from)).reveal(0.1)
+            copyable("To", item.to, mine: item.to == me, link: EgoScan.address(item.to)).reveal(0.13)
+            copyable("Transaction", item.hash, mine: false, link: EgoScan.tx(item.hash, height: item.blockHeight)).reveal(0.16)
         } footer: {
             Button("Done") { dismiss() }.buttonStyle(GlowButtonStyle())
         }
     }
 
-    private func copyable(_ label: String, _ value: String, mine: Bool) -> some View {
+    private func copyable(_ label: String, _ value: String, mine: Bool, link: URL?) -> some View {
         GlassField(label: label + (mine ? " (you)" : ""), icon: label == "Transaction" ? "number.square" : "person.crop.circle", trailing: AnyView(
-            Button(copied == label ? "Copied" : "Copy") {
-                UIPasteboard.general.string = value
-                copied = label
-                Haptics.tap()
+            HStack(spacing: 14) {
+                if let link {
+                    Link("Open", destination: link)
+                }
+                Button(copied == label ? "Copied" : "Copy") {
+                    UIPasteboard.general.string = value
+                    copied = label
+                    Haptics.tap()
+                }
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(Brand.lime)

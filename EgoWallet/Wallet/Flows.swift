@@ -32,7 +32,7 @@ struct SendView: View {
                 SuccessBurst(title: "Saved", subtitle: "No Ego node can be reached right now. Your payment is kept on this iPhone and sent automatically as soon as one answers.", icon: "clock.fill")
             } else if let sentHash {
                 SuccessBurst(title: "Sent", subtitle: "It shows as pending until the network confirms it, usually within seconds.")
-                HashCard(hash: sentHash)
+                HashCard(hash: sentHash, explorer: EgoScan.tx(sentHash))
             } else if reviewing, let amount {
                 SummaryCard(
                     rows: [
@@ -183,7 +183,7 @@ struct ConvertToEGUSDView: View {
                   subtitle: sentHash == nil ? "Stable dollars on Ego. 1 EGUSD is always $1." : nil, step: step, tint: Brand.mint) {
             if let sentHash {
                 SuccessBurst(title: "\(EGUSD.format(credits)) on the way", subtitle: "Your EGUSD shows once the network confirms it.")
-                HashCard(hash: sentHash)
+                HashCard(hash: sentHash, explorer: EgoScan.tx(sentHash))
             } else if reviewing, let amount, let price {
                 SummaryCard(rows: [
                     .init(label: "Burn", value: "\(Amount.format(amount)) EGOC"),
@@ -275,7 +275,7 @@ struct PayEGUSDView: View {
                 SuccessBurst(title: "Saved", subtitle: "No Ego node can be reached right now. Your payment is kept on this iPhone and sent automatically as soon as one answers.", icon: "clock.fill")
             } else if let sentHash {
                 SuccessBurst(title: "Paid", subtitle: "It shows as pending until the network confirms it.")
-                HashCard(hash: sentHash)
+                HashCard(hash: sentHash, explorer: EgoScan.tx(sentHash))
             } else if reviewing, let credits {
                 SummaryCard(rows: [
                     .init(label: "To", value: shortAddress(to), mono: true),
@@ -562,7 +562,7 @@ struct UnshieldSheet: View {
                   subtitle: result == nil ? "Prove your notes privately on this iPhone" : nil, step: result != nil ? 2 : busy ? 1 : 0) {
             if let result {
                 SuccessBurst(title: "\(Amount.format(result.payout)) EGOC", subtitle: "Pays out once the network confirms the proof.")
-                HashCard(hash: result.hash)
+                HashCard(hash: result.hash, explorer: EgoScan.tx(result.hash))
             } else {
                 GlassField(label: "Notes to spend", icon: "square.stack.3d.up") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
