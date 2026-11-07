@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var confirmRemove = false
     @State private var knownGateways = 0
     @State private var copied = false
+    @StateObject private var gate = AuthGate()
 
 
     @ObservedObject private var blocklist = ChatBlocklist.shared
@@ -26,6 +27,7 @@ struct SettingsView: View {
                             link(StakingPage(), "lock.circle.fill", Brand.mint, "Staking", "Lock EGOC to secure the network and to vote")
                         }
                         walletCard
+                        AuthenticatorCard(address: app.address)
                         networkCard
                         if !blocklist.blocked.isEmpty { blockedCard }
                         GlassCard {
@@ -46,6 +48,7 @@ struct SettingsView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .authGate(gate)
             .confirmationDialog("Log out of Ego Wallet?", isPresented: $confirmRemove, titleVisibility: .visible) {
                 Button("Log out", role: .destructive) { Task { await logOut() } }
             } message: {
@@ -160,6 +163,7 @@ struct SettingsView: View {
     private func logOut() async {
         do {
             try await app.logOut()
+            Authenticator.shared.forget()
         } catch VaultError.cancelled {
             problem = nil
         } catch {
@@ -168,6 +172,7 @@ struct SettingsView: View {
     }
 
     private func reveal() async {
+        guard await gate.require(.reveal) else { return }
         do {
             phrase = try await app.revealPhrase()
             problem = nil

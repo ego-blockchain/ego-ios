@@ -13,6 +13,7 @@ struct SendView: View {
     @State private var memo = ""
     @State private var fee: UInt64?
     @State private var reviewing = false
+    @StateObject private var gate = AuthGate()
     @State private var busy = false
     @State private var problem: String?
     @State private var sentHash: String?
@@ -71,11 +72,16 @@ struct SendView: View {
             }
         }
         .task { fee = await model.networkFee() }
+        .authGate(gate)
     }
 
     private func send(_ amount: UInt64) async {
         busy = true
         problem = nil
+        guard await gate.require(.send) else {
+            busy = false
+            return
+        }
         do {
             switch try await model.send(to: to, amount: amount, memo: memo) {
             case .sent(let hash): withAnimation(.spring) { sentHash = hash }
@@ -256,6 +262,7 @@ struct PayEGUSDView: View {
     @State private var amountText = ""
     @State private var fee: UInt64?
     @State private var reviewing = false
+    @StateObject private var gate = AuthGate()
     @State private var busy = false
     @State private var problem: String?
     @State private var sentHash: String?
@@ -313,11 +320,16 @@ struct PayEGUSDView: View {
         }
         .task { fee = await model.networkFee() }
         .sheet(isPresented: $converting) { ConvertToEGUSDView() }
+        .authGate(gate)
     }
 
     private func pay(_ credits: UInt64) async {
         busy = true
         problem = nil
+        guard await gate.require(.send) else {
+            busy = false
+            return
+        }
         do {
             switch try await model.payEGUSD(to: to, credits: credits) {
             case .sent(let hash): withAnimation(.spring) { sentHash = hash }
@@ -366,6 +378,7 @@ struct CoinSendView: View {
     @State private var amount: String
     @State private var tag = ""
     @State private var prepared: PreparedTransfer?
+    @StateObject private var gate = AuthGate()
     @State private var busy = false
     @State private var problem: String?
     @State private var sentHash: String?
@@ -438,6 +451,7 @@ struct CoinSendView: View {
                     .disabled(!recipientOK || !amountOK || !tagOK || busy)
             }
         }
+        .authGate(gate)
     }
 
     private func review() async {
@@ -456,6 +470,10 @@ struct CoinSendView: View {
     private func send(_ p: PreparedTransfer) async {
         busy = true
         problem = nil
+        guard await gate.require(.send) else {
+            busy = false
+            return
+        }
         do {
             let hash = try await ExternalSend.broadcast(p)
             withAnimation(.spring) { sentHash = hash }

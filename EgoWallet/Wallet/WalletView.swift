@@ -4,8 +4,11 @@ import SwiftUI
 
 struct WalletView: View {
     @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = Authenticator.shared
     @State private var sending = false
     @State private var receiving = false
+    @State private var remindAuth = false
+    @State private var settingUpAuth = false
 
     var body: some View {
         Group {
@@ -39,7 +42,18 @@ struct WalletView: View {
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
+            .sheet(isPresented: $settingUpAuth) { AuthenticatorSetupSheet(address: model.address) }
             .task { await model.refresh() }
+            .task { remindAuth = AuthReminder.due(enabled: auth.enabled) }
+            .alert("Protect your wallet", isPresented: $remindAuth) {
+                Button("Set up") {
+                    AuthReminder.snooze(days: 1)
+                    settingUpAuth = true
+                }
+                Button("Later", role: .cancel) { AuthReminder.snooze(days: 7) }
+            } message: {
+                Text("Turn on an authenticator app such as Google Authenticator. Payments and showing your 24 words will then also need a 6-digit code.")
+            }
         }
     }
 
