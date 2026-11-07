@@ -570,6 +570,7 @@ struct UnshieldSheet: View {
     @State private var busy = false
     @State private var problem: String?
     @State private var result: (hash: String, payout: UInt64)?
+    @StateObject private var gate = AuthGate()
 
     private var selected: [Shielded.Note] { notes.filter { chosen.contains($0.id) } }
     private var total: UInt64 { selected.map(\.value).reduce(0, +) }
@@ -638,11 +639,19 @@ struct UnshieldSheet: View {
             }
         }
         .interactiveDismissDisabled(busy)
+        .authGate(gate)
     }
 
     private func unshield() async {
         busy = true
         problem = nil
+        // Paying out to someone else is a payment like any other; back to this wallet isn't.
+        if to != model.address {
+            guard await gate.require(.send) else {
+                busy = false
+                return
+            }
+        }
         do {
             let r = try await model.unshield(selected, to: to)
             withAnimation(.spring) { result = r }
