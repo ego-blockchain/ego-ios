@@ -176,7 +176,7 @@ public actor GatewayDirectory {
         self.cache = Dictionary(store.load().map { ($0.announcement.endpoint, $0) }, uniquingKeysWith: { a, _ in a })
         self.probe = probe ?? { a in
             guard let g = a.gateway else { return false }
-            return (try? await GatewayClient(gateway: g, timeout: 6).health()) == true
+            return (try? await GatewayClient(gateway: g, timeout: 10).health()) == true
         }
         self.localProbe = localProbe ?? { g in
             (try? await GatewayClient(gateway: g, timeout: 3).health()) == true
