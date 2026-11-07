@@ -46,6 +46,14 @@ final class OutboxTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
+    func testSavedTabsAreOnlyLoadedForTheirOwnAddress() {
+        var saved = KindHistorySnapshot(address: "egot1me")
+        saved.lists["sent"] = []
+        saved.save(to: url)
+        XCTAssertEqual(KindHistorySnapshot.load(from: url, address: "egot1me"), saved)
+        XCTAssertNil(KindHistorySnapshot.load(from: url, address: "egot1other"))
+    }
+
     func testSnapshotIsOnlyLoadedForItsOwnAddress() {
         let snapshot = WalletSnapshot(address: "egot1me", balance: 5, credits: nil, history: [], updatedAt: 100)
         snapshot.save(to: url)

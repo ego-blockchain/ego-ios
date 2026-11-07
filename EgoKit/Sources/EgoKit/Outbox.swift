@@ -130,3 +130,30 @@ public struct WalletSnapshot: Codable, Equatable {
         #endif
     }
 }
+
+public struct KindHistorySnapshot: Codable, Equatable {
+    public let address: String
+    public var lists: [String: [HistoryItem]]
+
+    public init(address: String, lists: [String: [HistoryItem]] = [:]) {
+        self.address = address
+        self.lists = lists
+    }
+
+    public static func load(from url: URL, address: String) -> KindHistorySnapshot? {
+        guard let data = try? Data(contentsOf: url),
+              let snapshot = try? JSONDecoder().decode(KindHistorySnapshot.self, from: data),
+              snapshot.address == address
+        else { return nil }
+        return snapshot
+    }
+
+    public func save(to url: URL) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        #if os(iOS)
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        #else
+        try? data.write(to: url, options: .atomic)
+        #endif
+    }
+}

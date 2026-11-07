@@ -11,6 +11,18 @@ final class ActivityTests: XCTestCase {
         return try! JSONDecoder().decode(HistoryItem.self, from: Data(json.utf8))
     }
 
+    func testAGatewayThatIgnoresTheFilterIsNoticed() {
+        let reward = tx(from: HistoryItem.nodePool, to: me, type: "reward")
+        let sent = tx(from: me, to: "egot1you")
+        let priceReport = tx(from: me, to: me, type: "price_report", amount: 0)
+        XCTAssertTrue([sent, priceReport].honors(kind: "sent", for: me))
+        XCTAssertTrue([HistoryItem]().honors(kind: "sent", for: me))
+        XCTAssertFalse([reward, reward].honors(kind: "sent", for: me))
+        XCTAssertFalse([sent].honors(kind: "rewards", for: me))
+        XCTAssertTrue([reward].honors(kind: "rewards", for: me))
+        XCTAssertTrue([reward].honors(kind: "everything", for: me))
+    }
+
     func testSentReceivedAndRewards() {
         XCTAssertEqual(tx(from: me, to: "egot1you").direction(for: me), .sent)
         XCTAssertEqual(tx(from: "egot1you", to: me).direction(for: me), .received)

@@ -56,6 +56,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var queued: [QueuedPayment] = []
     /// When the balance and history were last fetched; shown when they're out of date.
     @Published private(set) var lastUpdated: Date?
+    @Published private(set) var savedByKind: [String: [HistoryItem]] = [:]
 
     enum SendOutcome: Equatable {
         case sent(String)
@@ -71,6 +72,7 @@ final class AppModel: ObservableObject {
     private var pathSignature = ""
     private var outbox: Outbox
     private let snapshotURL: URL
+    private let kindHistoryURL: URL
     private var flushing = false
     private var flushLoop: Task<Void, Never>?
 
@@ -80,6 +82,7 @@ final class AppModel: ObservableObject {
         self.directory = directory
         outbox = Outbox(url: support.appendingPathComponent("outbox.json"))
         snapshotURL = support.appendingPathComponent("wallet-snapshot.json")
+        kindHistoryURL = support.appendingPathComponent("history-by-kind.json")
         nearby = LocalGatewayBrowser { gateways in
             Task { await directory.setLocal(gateways) }
         }
@@ -92,6 +95,7 @@ final class AppModel: ObservableObject {
                 history = snapshot.history
                 lastUpdated = Date(timeIntervalSince1970: TimeInterval(snapshot.updatedAt))
             }
+            savedByKind = KindHistorySnapshot.load(from: kindHistoryURL, address: stored)?.lists ?? [:]
             queued = outbox.items(from: stored)
         } else {
             phase = .onboarding
@@ -175,6 +179,7 @@ final class AppModel: ObservableObject {
         try vault.store(seed: key.seed, address: key.address)
         self.key = key
         address = key.address
+        savedByKind = KindHistorySnapshot.load(from: kindHistoryURL, address: key.address)?.lists ?? [:]
         phase = .ready
         Task { await refresh() }
     }
@@ -495,7 +500,24 @@ final class AppModel: ObservableObject {
     /// would otherwise fill every page of the newest history.
     func history(kind: String, limit: Int) async throws -> [HistoryItem] {
         let address = self.address
-        return try await perform { try await $0.history(of: address, limit: limit, kind: kind) }
+        let first = try await perform { try await $0.history(of: address, limit: limit, kind: kind) }
+        if first.honors(kind: kind, for: address) {
+            remember(first, kind: kind, for: address)
+            return first
+        }
+        for client in await gatewayCandidates().dropFirst() {
+            if let list = try? await client.history(of: address, limit: limit, kind: kind), list.honors(kind: kind, for: address) {
+                remember(list, kind: kind, for: address)
+                return list
+            }
+        }
+        return first
+    }
+
+    private func remember(_ list: [HistoryItem], kind: String, for address: String) {
+        guard address == self.address else { return }
+        savedByKind[kind] = list
+        KindHistorySnapshot(address: address, lists: savedByKind).save(to: kindHistoryURL)
     }
 
     func loadOlderHistory() async {
@@ -616,6 +638,8 @@ final class AppModel: ObservableObject {
         flushLoop?.cancel()
         flushLoop = nil
         try? FileManager.default.removeItem(at: snapshotURL)
+        try? FileManager.default.removeItem(at: kindHistoryURL)
+        savedByKind = [:]
         lastUpdated = nil
         vault.delete()
         key = nil

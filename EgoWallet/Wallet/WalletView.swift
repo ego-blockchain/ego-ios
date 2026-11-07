@@ -354,6 +354,7 @@ struct ActivitySection: View {
     /// Asks the network for this tab's transactions only.
     private func fetch() async {
         guard let kind = filter.kind else { fetched = []; return }
+        if fetched.isEmpty, let saved = model.savedByKind[kind] { fetched = saved }
         fetching = true
         defer { fetching = false }
         if let list = try? await model.history(kind: kind, limit: fetchedLimit), filter.kind == kind {

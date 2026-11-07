@@ -48,3 +48,21 @@ public extension HistoryItem {
         return nil
     }
 }
+
+public extension ActivityDirection {
+    init?(kind: String) {
+        switch kind {
+        case "sent": self = .sent
+        case "received": self = .received
+        case "rewards": self = .reward
+        default: return nil
+        }
+    }
+}
+
+public extension Array where Element == HistoryItem {
+    func honors(kind: String, for me: String) -> Bool {
+        guard let wanted = ActivityDirection(kind: kind) else { return true }
+        return allSatisfy { item in item.direction(for: me).map { $0 == wanted } ?? true }
+    }
+}
