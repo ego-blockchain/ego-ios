@@ -51,6 +51,14 @@ public struct GatewayAnnouncement: Codable, Equatable, Hashable {
     public static func isPublicEndpoint(_ endpoint: String) -> Bool {
         guard endpoint.hasPrefix("https://"), endpoint.hasSuffix("/rpc") else { return false }
         let hostPort = endpoint.dropFirst("https://".count).dropLast("/rpc".count)
+        if hostPort.first == "[" {
+            guard let close = hostPort.firstIndex(of: "]") else { return false }
+            let afterClose = hostPort[hostPort.index(after: close)...]
+            guard afterClose.first == ":", let port = UInt16(afterClose.dropFirst()), port >= 1024,
+                  let groups = ipv6Groups(String(hostPort[hostPort.index(after: hostPort.startIndex)..<close]))
+            else { return false }
+            return isGlobalIPv6(groups)
+        }
         let pieces = hostPort.split(separator: ":")
         guard pieces.count == 2, let port = UInt16(pieces[1]), port >= 1024 else { return false }
         let octets = pieces[0].split(separator: ".", omittingEmptySubsequences: false).compactMap { UInt8($0) }
@@ -61,6 +69,30 @@ public struct GatewayAnnouncement: Codable, Equatable, Hashable {
             || (a == 100 && (64...127).contains(b)) || (a == 192 && b == 0) || (a == 198 && (18...19).contains(b))
             || (a == 198 && b == 51) || (a == 203 && b == 0)
         return !reserved
+    }
+
+    static func ipv6Groups(_ text: String) -> [UInt16]? {
+        guard !text.isEmpty, text == text.lowercased() else { return nil }
+        let halves = text.components(separatedBy: "::")
+        guard halves.count <= 2 else { return nil }
+        func parse(_ part: String) -> [UInt16]? {
+            if part.isEmpty { return [] }
+            var out: [UInt16] = []
+            for piece in part.split(separator: ":", omittingEmptySubsequences: false) {
+                guard (1...4).contains(piece.count), piece.allSatisfy(\.isHexDigit), let value = UInt16(piece, radix: 16) else { return nil }
+                out.append(value)
+            }
+            return out
+        }
+        guard let head = parse(halves[0]) else { return nil }
+        if halves.count == 1 { return head.count == 8 ? head : nil }
+        guard let tail = parse(halves[1]), head.count + tail.count <= 7 else { return nil }
+        return head + Array(repeating: 0, count: 8 - head.count - tail.count) + tail
+    }
+
+    static func isGlobalIPv6(_ groups: [UInt16]) -> Bool {
+        groups.count == 8 && (groups[0] & 0xe000) == 0x2000
+            && !(groups[0] == 0x2001 && (groups[1] == 0x0db8 || groups[1] == 0)) && groups[0] != 0x2002
     }
 }
 

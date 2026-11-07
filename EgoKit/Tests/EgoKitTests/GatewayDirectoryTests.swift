@@ -81,6 +81,21 @@ final class GatewayDirectoryTests: XCTestCase {
         XCTAssertFalse(try announcement(key, ip: "8.8.8.8", ts: .min + 1).isAuthentic(now: 1_800_000_000))
     }
 
+    func testIPv6GatewaysAreAcceptedOnlyWhenGlobal() {
+        XCTAssertTrue(GatewayAnnouncement.isPublicEndpoint("https://[2001:56a:7d8e:d100::1]:47398/rpc"))
+        XCTAssertTrue(GatewayAnnouncement.isPublicEndpoint("https://[2607:fb90:1:2:3:4:5:6]:47398/rpc"))
+        for local in ["fd00::1", "fe80::1", "::1", "2001:db8::1", "2002:c000:204::1", "2001:0:4136:e378::1", "::ffff:8.8.8.8"] {
+            XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[\(local)]:47398/rpc"), local)
+        }
+        XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[2001:56a::1]:80/rpc"), "a low port")
+        XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[2001:56A::1]:47398/rpc"), "upper case")
+        XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[2001:56a::1::2]:47398/rpc"))
+        XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[2001:56a::1]47398/rpc"))
+        XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[2001:56a::1:47398/rpc"))
+        XCTAssertFalse(GatewayAnnouncement.isPublicEndpoint("https://[2001:56a:1:2:3:4:5:6:7]:47398/rpc"))
+        XCTAssertTrue(GatewayAnnouncement.isPublicEndpoint("https://8.8.8.8:47398/rpc"), "IPv4 still works")
+    }
+
     func testSavedGatewaysAreUsedWithoutAskingTheOracle() async throws {
         let counter = Counter()
         let saved = try announcement(EgoKey.generate(), ip: "8.8.4.4", ts: 1_800_000_000)
