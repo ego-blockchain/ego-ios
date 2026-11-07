@@ -26,6 +26,17 @@ final class Authenticator: ObservableObject {
     }
 
     @Published private(set) var enabled = false
+
+    /// How long the wallet stays unlocked while its owner fetches a code from another app.
+    static let codeTripSeconds: TimeInterval = 180
+    /// Screens waiting for a code right now. Leaving for the authenticator app
+    /// doesn't lock the wallet while any are open, so they're still there on return.
+    private var waiting: Set<String> = []
+    var awaitingCode: Bool { !waiting.isEmpty }
+
+    func waitForCode(_ who: String, _ on: Bool) {
+        if on { waiting.insert(who) } else { waiting.remove(who) }
+    }
     private var fails = 0
     private var lockedUntil = Date.distantPast
     private let service = "com.egoblockchain.wallet"
@@ -119,8 +130,11 @@ final class Authenticator: ObservableObject {
 final class AuthGate: ObservableObject {
     @Published var pending: Authenticator.Request?
 
+    private lazy var id = "gate-\(ObjectIdentifier(self).hashValue)"
+
     func require(_ action: Authenticator.Action) async -> Bool {
         guard Authenticator.shared.enabled else { return true }
+        Authenticator.shared.waitForCode(id, true)
         return await withCheckedContinuation { continuation in
             pending = Authenticator.Request(action: action) { continuation.resume(returning: $0) }
         }
@@ -129,6 +143,7 @@ final class AuthGate: ObservableObject {
     func finish(_ ok: Bool) {
         let request = pending
         pending = nil
+        Authenticator.shared.waitForCode(id, false)
         request?.resume(ok)
     }
 }
@@ -207,6 +222,13 @@ struct AuthenticatorCard: View {
     @State private var copied = false
 
     var body: some View {
+        card
+            // Setting up and turning off both send the owner to the authenticator app and back.
+            .onChange(of: setupSecret != nil || turningOff) { _, on in auth.waitForCode("card", on) }
+            .onDisappear { auth.waitForCode("card", false) }
+    }
+
+    private var card: some View {
         GlassCard {
             SectionLabel(text: "Authenticator app")
             Text(auth.enabled

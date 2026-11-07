@@ -4,6 +4,8 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
+    /// When the owner left to get a code from their authenticator app.
+    @State private var leftForCode: Date?
 
     var body: some View {
         Group {
@@ -30,8 +32,20 @@ struct RootView: View {
         .preferredColorScheme(.dark)
         .tint(Brand.lime)
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                model.lock()
+            switch phase {
+            case .background:
+                // Waiting for a code: going to fetch it keeps the screen as it was,
+                // unless the trip takes too long.
+                if model.phase == .ready && Authenticator.shared.awaitingCode {
+                    leftForCode = Date()
+                } else {
+                    model.lock()
+                }
+            default:
+                if let left = leftForCode {
+                    leftForCode = nil
+                    if Date().timeIntervalSince(left) > Authenticator.codeTripSeconds { model.lock() }
+                }
             }
         }
     }
@@ -94,7 +108,9 @@ struct MainTabs: View {
 
     private var tab: Binding<MainTab> {
         Binding(get: { shown ?? .wallet }, set: { next in
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.88)) { shown = next }
+            var move = Transaction(animation: .spring(response: 0.4, dampingFraction: 0.88))
+            move.tabSwitch = true
+            withTransaction(move) { shown = next }
         })
     }
 
@@ -119,7 +135,11 @@ struct MainTabs: View {
         NavigationStack(path: $path) {
             TabView(selection: tab) {
                 ForEach(MainTab.allCases, id: \.self) { section in
-                    page(section).tag(section)
+                    page(section)
+                        // The pager slides; the page itself doesn't animate. Pages laid out for the
+                        // first time during a tapped jump grew in from nothing, which looked like a zoom.
+                        .transaction { if $0.tabSwitch { $0.animation = nil } }
+                        .tag(section)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -175,6 +195,18 @@ struct MainTabs: View {
             await market
         }
         .onChange(of: app.phase) { _, _ in storage.attach(app) }
+    }
+}
+
+private struct TabSwitchKey: TransactionKey {
+    static let defaultValue = false
+}
+
+extension Transaction {
+    /// Set while the pager moves to another section.
+    var tabSwitch: Bool {
+        get { self[TabSwitchKey.self] }
+        set { self[TabSwitchKey.self] = newValue }
     }
 }
 
