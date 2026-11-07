@@ -12,6 +12,7 @@ struct WalletView: View {
 
     var body: some View {
         Group {
+            ScrollViewReader { scroller in
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     PageTitle(title: "Wallet") { WavingBuddy() }
@@ -29,9 +30,14 @@ struct WalletView: View {
                     if let problem = model.problem {
                         ProblemBanner(text: problem)
                     }
-                    ActivitySection()
+                    ActivitySection {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            scroller.scrollTo(ActivitySection.end, anchor: .bottom)
+                        }
+                    }
                 }
                 .padding(16)
+            }
             }
             .refreshable {
                 async let ego: Void = model.refresh()
@@ -202,6 +208,11 @@ enum ActivityFilter: String, CaseIterable {
 /// all of them or only what was sent, received or paid as rewards.
 struct ActivitySection: View {
     static let pageSizes = [5, 10, 50]
+    /// Marks the end of Activity, for scrolling down to it.
+    static let end = "activity.end"
+
+    /// Scrolls the wallet down to the end of Activity.
+    var scrollToEnd: () -> Void = {}
 
     @EnvironmentObject private var model: AppModel
     @AppStorage("ego.activity.pageSize") private var pageSize = 10
@@ -213,6 +224,8 @@ struct ActivitySection: View {
     @State private var fetched: [HistoryItem] = []
     @State private var fetchedLimit = AppModel.historyStep
     @State private var fetching = false
+    /// A tab was just picked: once its list is in, scroll down to it.
+    @State private var followTab = false
 
     private var size: Int { ActivitySection.pageSizes.contains(pageSize) ? pageSize : 10 }
     private var items: [HistoryItem] {
@@ -275,6 +288,7 @@ struct ActivitySection: View {
             if page > 0 || (hasOlder && !(items.isEmpty && filter == .all)) {
                 pager
             }
+            Color.clear.frame(height: 1).id(ActivitySection.end)
         }
         .sheet(item: $selected) { TransactionDetailView(item: $0, me: model.address) }
         .onChange(of: pageSize) { _, _ in page = 0 }
@@ -282,6 +296,8 @@ struct ActivitySection: View {
             page = 0
             fetched = []
             fetchedLimit = AppModel.historyStep
+            followTab = filter.kind != nil
+            scrollDown()
         }
         // Again whenever the wallet refreshes, so a new payment shows in its tab.
         .task(id: "\(filter.rawValue)|\(model.lastUpdated?.timeIntervalSince1970 ?? 0)") { await fetch() }
@@ -342,6 +358,18 @@ struct ActivitySection: View {
         defer { fetching = false }
         if let list = try? await model.history(kind: kind, limit: fetchedLimit), filter.kind == kind {
             fetched = list
+        }
+        if followTab {
+            followTab = false
+            scrollDown()
+        }
+    }
+
+    /// After the list has been laid out at its new length.
+    private func scrollDown() {
+        Task { @MainActor in
+            await Task.yield()
+            scrollToEnd()
         }
     }
 }
