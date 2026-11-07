@@ -181,7 +181,7 @@ enum ActivityFilter: String, CaseIterable {
 
     func includes(_ item: HistoryItem, me: String) -> Bool {
         switch self {
-        case .all: true
+        case .all: !item.isNetworkRecord
         case .sent: item.direction(for: me) == .sent
         case .received: item.direction(for: me) == .received
         case .rewards: item.direction(for: me) == .reward
