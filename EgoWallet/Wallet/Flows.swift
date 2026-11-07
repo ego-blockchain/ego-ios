@@ -164,7 +164,6 @@ struct ReceiveView: View {
 struct ConvertToEGUSDView: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var gate = AuthGate()
     @State private var amountText = ""
     @State private var price: UInt64?
     @State private var fee: UInt64?
