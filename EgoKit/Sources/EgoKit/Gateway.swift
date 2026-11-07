@@ -309,9 +309,11 @@ public final class GatewayClient {
         return info
     }
 
-    public func history(of address: String, limit: Int = 50) async throws -> [HistoryItem] {
-        struct Params: Encodable { let address: String; let limit: Int }
-        let items: [HistoryItem]? = try await call("wallet.getTransactionHistory", Params(address: address, limit: limit))
+    /// The newest transactions of `address`. With `kind` ("sent", "received" or "rewards"),
+    /// only those; a gateway too old to filter ignores it and sends everything.
+    public func history(of address: String, limit: Int = 50, kind: String? = nil) async throws -> [HistoryItem] {
+        struct Params: Encodable { let address: String; let limit: Int; let kind: String? }
+        let items: [HistoryItem]? = try await call("wallet.getTransactionHistory", Params(address: address, limit: limit, kind: kind))
         return items ?? []
     }
 

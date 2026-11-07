@@ -163,23 +163,79 @@ struct QueuedPaymentsCard: View {
     }
 }
 
-/// The wallet's transactions a page at a time, 5, 10 or 50 to a page.
+/// Which transactions Activity shows.
+enum ActivityFilter: String, CaseIterable {
+    case all, sent, received, rewards
+
+    /// What the network's history call takes to send only these.
+    var kind: String? { self == .all ? nil : rawValue }
+
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .sent: "Sent"
+        case .received: "Received"
+        case .rewards: "Rewards"
+        }
+    }
+
+    func includes(_ item: HistoryItem, me: String) -> Bool {
+        switch self {
+        case .all: true
+        case .sent: item.direction(for: me) == .sent
+        case .received: item.direction(for: me) == .received
+        case .rewards: item.direction(for: me) == .reward
+        }
+    }
+
+    var empty: String {
+        switch self {
+        case .all: "No transactions yet."
+        case .sent: "Nothing sent yet."
+        case .received: "Nothing received yet."
+        case .rewards: "No rewards yet. Running Ego Desktop earns them."
+        }
+    }
+}
+
+/// The wallet's transactions a page at a time, 5, 10 or 50 to a page,
+/// all of them or only what was sent, received or paid as rewards.
 struct ActivitySection: View {
     static let pageSizes = [5, 10, 50]
 
     @EnvironmentObject private var model: AppModel
     @AppStorage("ego.activity.pageSize") private var pageSize = 10
+    @AppStorage("ego.activity.filter") private var filter = ActivityFilter.all
     @State private var page = 0
     @State private var loadingOlder = false
     @State private var selected: HistoryItem?
+    /// Sent, received or rewards as the network listed them, and how many were asked for.
+    @State private var fetched: [HistoryItem] = []
+    @State private var fetchedLimit = AppModel.historyStep
+    @State private var fetching = false
 
     private var size: Int { ActivitySection.pageSizes.contains(pageSize) ? pageSize : 10 }
-    private var pageCount: Int { max(1, (model.history.count + size - 1) / size) }
-    private var shown: ArraySlice<HistoryItem> {
-        let start = min(page * size, model.history.count)
-        return model.history[start..<min(start + size, model.history.count)]
+    private var items: [HistoryItem] {
+        guard filter != .all else { return model.history }
+        let me = model.address
+        // Filtered here too, for gateways too old to filter; the wallet's own newest
+        // history adds what was just sent and isn't listed yet.
+        var seen = Set<String>()
+        return (model.history + fetched)
+            .filter { filter.includes($0, me: me) && seen.insert($0.hash).inserted }
+            .sorted { $0.timestamp > $1.timestamp }
     }
-    private var hasOlder: Bool { page + 1 < pageCount || model.mayHaveOlderHistory }
+    private var mayHaveOlder: Bool {
+        filter == .all ? model.mayHaveOlderHistory
+            : fetched.count >= fetchedLimit && fetchedLimit < AppModel.historyMax
+    }
+    private var pageCount: Int { max(1, (items.count + size - 1) / size) }
+    private var shown: ArraySlice<HistoryItem> {
+        let all = items
+        let start = min(page * size, all.count)
+        return all[start..<min(start + size, all.count)]
+    }
+    private var hasOlder: Bool { page + 1 < pageCount || mayHaveOlder }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -192,8 +248,12 @@ struct ActivitySection: View {
                 .pickerStyle(.segmented)
                 .frame(width: 150)
             }
-            if model.history.isEmpty {
-                Text(model.refreshing ? "Loading…" : "No transactions yet.")
+            Picker("Show", selection: $filter) {
+                ForEach(ActivityFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            if items.isEmpty {
+                Text(model.refreshing || loadingOlder || fetching ? "Loading…" : filter.empty)
                     .foregroundStyle(Brand.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .card()
@@ -211,13 +271,20 @@ struct ActivitySection: View {
                     }
                 }
                 .card()
-                if page > 0 || hasOlder {
-                    pager
-                }
+            }
+            if page > 0 || (hasOlder && !(items.isEmpty && filter == .all)) {
+                pager
             }
         }
         .sheet(item: $selected) { TransactionDetailView(item: $0, me: model.address) }
         .onChange(of: pageSize) { _, _ in page = 0 }
+        .onChange(of: filter) { _, _ in
+            page = 0
+            fetched = []
+            fetchedLimit = AppModel.historyStep
+        }
+        // Again whenever the wallet refreshes, so a new payment shows in its tab.
+        .task(id: "\(filter.rawValue)|\(model.lastUpdated?.timeIntervalSince1970 ?? 0)") { await fetch() }
         .onChange(of: model.history.count) { _, _ in page = min(page, pageCount - 1) }
     }
 
@@ -230,7 +297,7 @@ struct ActivitySection: View {
             }
             .disabled(page == 0)
             Spacer()
-            Text("\(page * size + 1)–\(page * size + shown.count) of \(model.history.count)\(model.mayHaveOlderHistory ? "+" : "")")
+            Text(shown.isEmpty ? "None loaded" : "\(page * size + 1)–\(page * size + shown.count) of \(items.count)\(mayHaveOlder ? "+" : "")")
                 .font(.system(.footnote, design: .rounded))
                 .foregroundStyle(Brand.muted)
                 .monospacedDigit()
@@ -256,11 +323,25 @@ struct ActivitySection: View {
             return
         }
         loadingOlder = true
-        let before = model.history.count
-        await model.loadOlderHistory()
-        loadingOlder = false
-        if model.history.count > before {
+        defer { loadingOlder = false }
+        if filter == .all {
+            await model.loadOlderHistory()
+        } else {
+            fetchedLimit = min(fetchedLimit + AppModel.historyStep, AppModel.historyMax)
+            await fetch()
+        }
+        if items.count > (page + 1) * size {
             page += 1
+        }
+    }
+
+    /// Asks the network for this tab's transactions only.
+    private func fetch() async {
+        guard let kind = filter.kind else { fetched = []; return }
+        fetching = true
+        defer { fetching = false }
+        if let list = try? await model.history(kind: kind, limit: fetchedLimit), filter.kind == kind {
+            fetched = list
         }
     }
 }
@@ -299,12 +380,29 @@ struct ActivityKind {
             amount = "\(incoming ? "+" : "−")\(EGUSD.format(credits))"
             self.incoming = incoming
             icon = "dollarsign.circle"
+        case _ where item.isReward(for: me):
+            title = Self.rewardTitle(item.txType)
+            counterparty = "From the Ego network"
+            amount = "+\(Amount.format(item.amount, maxDecimals: 4))"
+            self.incoming = true
+            icon = "gift.fill"
         default:
             title = incoming ? "Received" : "Sent"
             counterparty = incoming ? "From \(shortAddress(item.from))" : "To \(shortAddress(item.to))"
             amount = "\(incoming ? "+" : "−")\(Amount.format(item.amount, maxDecimals: 4))"
             self.incoming = incoming
             icon = incoming ? "arrow.down.left" : "arrow.up.right"
+        }
+    }
+
+    static func rewardTitle(_ type: String?) -> String {
+        switch type {
+        case "uptime_reward": "Uptime reward"
+        case "storage_reward": "Storage reward"
+        case "post_reward": "Post reward"
+        case "fee_distribution": "Share of network fees"
+        case "reward", "coinbase": "Block reward"
+        default: "Reward"
         }
     }
 

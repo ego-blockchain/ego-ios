@@ -491,6 +491,13 @@ final class AppModel: ObservableObject {
         return try await perform { try await $0.rewards(of: address) }
     }
 
+    /// Only sent, received or rewards, asked of the network: a busy node's rewards
+    /// would otherwise fill every page of the newest history.
+    func history(kind: String, limit: Int) async throws -> [HistoryItem] {
+        let address = self.address
+        return try await perform { try await $0.history(of: address, limit: limit, kind: kind) }
+    }
+
     func loadOlderHistory() async {
         guard mayHaveOlderHistory else { return }
         historyLimit = min(historyLimit + AppModel.historyStep, AppModel.historyMax)
