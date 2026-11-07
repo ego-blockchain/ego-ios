@@ -168,6 +168,7 @@ struct ConvertToEGUSDView: View {
     @State private var price: UInt64?
     @State private var fee: UInt64?
     @State private var reviewing = false
+    @StateObject private var gate = AuthGate()
     @State private var busy = false
     @State private var problem: String?
     @State private var sentHash: String?
@@ -239,11 +240,16 @@ struct ConvertToEGUSDView: View {
                 problem = model.message(for: error)
             }
         }
+        .authGate(gate)
     }
 
     private func convert(_ amount: UInt64, price: UInt64) async {
         busy = true
         problem = nil
+        guard await gate.require(.send) else {
+            busy = false
+            return
+        }
         do {
             let hash = try await model.convertToEGUSD(amount: amount, priceMicroUsd: price)
             withAnimation(.spring) { sentHash = hash }
