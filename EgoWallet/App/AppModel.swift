@@ -418,6 +418,14 @@ final class AppModel: ObservableObject {
         return try await submit(tx)
     }
 
+    func recordStoredFile(_ record: StorageRecord.Record, delete: Bool = false) async throws -> String {
+        guard let key else { throw WalletError.locked }
+        let address = key.address
+        let info = try await perform { try await $0.nonce(of: address) }
+        let tx = try Transactions.storageFile(key: key, record: record, delete: delete, nonce: info.next, fee: info.feeUegoc, version: info.txVersion)
+        return try await submit(tx, refreshAfter: false)
+    }
+
     /// As much history as a gateway gives, for finding an older plan payment.
     func longHistory() async throws -> [HistoryItem] {
         let address = self.address

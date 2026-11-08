@@ -48,6 +48,8 @@ final class StorageStore: ObservableObject {
     static let keepOpenedSeconds: TimeInterval = 3 * 86_400
 
     private var uploading = false
+    private var recording = false
+    static let recordRetrySeconds: Int64 = 3600
 
     private var library: FileLibrary?
     private weak var app: AppModel?
@@ -136,6 +138,7 @@ final class StorageStore: ObservableObject {
         if c != nil {
             await retryDeletes()
             await uploadWaiting()
+            await recordOnChain()
             await freeUpSpace()
         }
     }
@@ -550,15 +553,107 @@ final class StorageStore: ObservableObject {
         try? FileManager.default.removeItem(at: openedDir.appendingPathComponent(file.cid))
     }
 
+    private var onChainKey: String { "storage.onChain.\(owner)" }
+    private var recordTriedKey: String { "storage.onChainTried.\(owner)" }
+    private var offChainKey: String { "storage.offChain.\(owner)" }
+
+    private var onChain: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: onChainKey) ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: onChainKey) }
+    }
+
+    private var recordTried: [String: Double] {
+        get { UserDefaults.standard.dictionary(forKey: recordTriedKey) as? [String: Double] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: recordTriedKey) }
+    }
+
+    private var offChainPending: [String] {
+        get { UserDefaults.standard.stringArray(forKey: offChainKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: offChainKey) }
+    }
+
+    var paysHosts: Bool {
+        guard let s = subscription, s.confirmed, !s.plan.isFree else { return false }
+        return s.active(now: now) || s.inGrace(now: now)
+    }
+
+    private func recordedOnChain(_ cid: String) async -> Bool? {
+        guard let app else { return nil }
+        return try? await app.perform { try await $0.storageRecorded(cid: cid) }.recorded
+    }
+
+    func recordOnChain() async {
+        guard let app, app.key != nil, !recording else { return }
+        recording = true
+        defer { recording = false }
+        await retryUnrecords()
+        guard paysHosts else { return }
+        var done = onChain
+        defer { onChain = done }
+        for file in files where file.state == .stored && !done.contains(file.cid) {
+            let tried = recordTried[file.cid].map { Int64($0) }
+            let known = await recordedOnChain(file.cid)
+            if known == true {
+                done.insert(file.cid)
+                continue
+            }
+            if let tried, known == nil || now - tried < Self.recordRetrySeconds { continue }
+            guard let record = await chainRecord(of: file) else { continue }
+            recordTried[file.cid] = Double(now)
+            do {
+                _ = try await app.recordStoredFile(record)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func chainRecord(of file: LibraryFile) async -> StorageRecord.Record? {
+        let urls = file.manifest.blocks.map { blockURL($0.blockCid) }
+        let cid = file.cid
+        if urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) {
+            return await Task.detached(priority: .utility) { () -> StorageRecord.Record? in
+                var next = urls.makeIterator()
+                return try? StorageRecord.record(cid: cid) { try next.next().map { try Data(contentsOf: $0) } }
+            }.value
+        }
+        guard let app, let r = try? await app.perform({ try await $0.storageCommitment(cid: cid) }), r.cid == cid else { return nil }
+        return r
+    }
+
+    private func unrecord(_ cid: String) async {
+        guard let app else { return }
+        if await recordedOnChain(cid) == false {
+            offChainPending.removeAll { $0 == cid }
+            return
+        }
+        if (try? await app.recordStoredFile(.removal(of: cid), delete: true)) != nil {
+            offChainPending.removeAll { $0 == cid }
+        }
+    }
+
+    private func retryUnrecords() async {
+        for cid in offChainPending {
+            await unrecord(cid)
+        }
+    }
+
     /// Removes the file from this wallet: its key, its name and its blocks on this iPhone.
     /// A gateway passes the signed delete to every node that keeps a copy.
     func delete(_ file: LibraryFile) {
         if file.state == .stored, let app, let key = app.key {
             pendingDeletes.append(file.cid)
+            let wasRecorded = onChain.contains(file.cid) || recordTried[file.cid] != nil
+            if wasRecorded {
+                offChainPending.append(file.cid)
+                onChain.remove(file.cid)
+                recordTried[file.cid] = nil
+            }
             Task {
                 if (try? await app.perform({ try await $0.deleteFile(cid: file.cid, key: key) })) != nil {
                     pendingDeletes.removeAll { $0 == file.cid }
                 }
+                if wasRecorded { await unrecord(file.cid) }
             }
         }
         for entry in file.manifest.blocks {
