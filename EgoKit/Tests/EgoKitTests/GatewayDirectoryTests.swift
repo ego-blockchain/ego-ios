@@ -351,6 +351,30 @@ final class GatewayDirectoryTests: XCTestCase {
         XCTAssertTrue(none.isEmpty)
     }
 
+    func testHomeGatewaysThatLoseTheRaceStayAvailableForASecondOpinion() async throws {
+        let fast = Gateway(endpoint: URL(string: "https://192.168.1.20:47398/rpc")!, certSha256: cert, node: "")
+        let slow = Gateway(endpoint: URL(string: "https://192.168.1.21:47398/rpc")!, certSha256: cert, node: "")
+        let dead = Gateway(endpoint: URL(string: "https://192.168.1.22:47398/rpc")!, certSha256: cert, node: "")
+        let directory = GatewayDirectory(
+            store: MemoryStore([]),
+            probe: { _ in true },
+            fetchBootstrap: { [] },
+            exchange: { _ in [] },
+            localProbe: { g in
+                if g == dead { return false }
+                if g == slow { try? await Task.sleep(nanoseconds: 300_000_000) }
+                return true
+            },
+            clock: { 1_800_000_000 }
+        )
+        await directory.setLocal([dead, slow, fast])
+        let picked = try await directory.client()
+        XCTAssertNotEqual(picked.gateway, dead)
+        let nearby = await directory.nearby
+        XCTAssertTrue(nearby.contains(fast) && nearby.contains(slow), "losing the race is not a failure")
+        XCTAssertFalse(nearby.contains(dead), "one that didn't answer waits out its cooldown")
+    }
+
     func testLosingTheLocalGatewayMovesBackToTheInternet() async throws {
         let counter = Counter()
         let saved = try announcement(EgoKey.generate(), ip: "8.8.4.4", ts: 1_800_000_000)

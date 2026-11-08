@@ -144,10 +144,8 @@ final class AppModel: ObservableObject {
         } catch GatewayError.rpc(let code, let message) where code == AppModel.notHere || AppModel.tooOld(code, message) {
             // An older Ego Desktop may not have this method yet. Ask other
             // gateways rather than failing, without leaving this one.
-            for other in await directory.known.prefix(AppModel.notHereTries)
-            where other.announcement.endpoint != client.gateway.endpoint.absoluteString {
-                guard let gateway = other.announcement.gateway else { continue }
-                if let answer = try? await work(GatewayClient(gateway: gateway, timeout: 8)) {
+            for other in await gatewayCandidates() where other.gateway.endpoint != client.gateway.endpoint {
+                if let answer = try? await work(other) {
                     return answer
                 }
             }
@@ -580,7 +578,10 @@ final class AppModel: ObservableObject {
         guard online else { throw WalletError.offline }
         let address = self.address
         var clients = [try await gateway()]
-        for other in await gatewayCandidates() where clients.count < AppModel.historySources
+        // Every Ego Desktop on this Wi-Fi (asking them is cheap, and one may hold
+        // older blocks the others lack), then the internet up to historySources.
+        let sources = max(AppModel.historySources, 1 + (await directory.nearby.count))
+        for other in await gatewayCandidates() where clients.count < sources
             && !clients.contains(where: { $0.gateway.endpoint == other.gateway.endpoint }) {
             clients.append(other)
         }
@@ -605,7 +606,7 @@ final class AppModel: ObservableObject {
             throw failure ?? (WalletError.offline as Error)
         }
         let fromDesktop = AccountStore.shared.payments.only(kind: kind, for: address)
-        let merged = [HistoryItem].union(answers + [fromDesktop, savedByKind[kind] ?? []], keep: AppModel.historyKeep)
+        let merged = [HistoryItem].union(answers + [fromDesktop, (savedByKind[kind] ?? []).only(kind: kind, for: address)], keep: AppModel.historyKeep)
         remember(merged, kind: kind, for: address)
         return merged
     }

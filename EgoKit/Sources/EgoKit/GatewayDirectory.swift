@@ -330,22 +330,29 @@ public actor GatewayDirectory {
         }
         guard !candidates.isEmpty else { return nil }
         let probe = self.localProbe
-        let winner = await withTaskGroup(of: Gateway?.self) { group -> Gateway? in
+        let (winner, failed) = await withTaskGroup(of: (Gateway, Bool).self) { group -> (Gateway?, [Gateway]) in
             for g in candidates.prefix(GatewayDirectory.waveSize) {
-                group.addTask { await probe(g) ? g : nil }
+                group.addTask { (g, await probe(g)) }
             }
             // Wait for every probe before returning: returning while some were still
             // running is the likeliest cause of the iOS 27.2 crash App Review hit.
             var winner: Gateway?
-            while let result = await group.next() {
-                if winner == nil, let result {
-                    winner = result
-                    group.cancelAll()
+            var failed: [Gateway] = []
+            while let (g, ok) = await group.next() {
+                if winner == nil {
+                    if ok {
+                        winner = g
+                        group.cancelAll()
+                    } else {
+                        failed.append(g)
+                    }
                 }
             }
-            return winner
+            return (winner, failed)
         }
-        for g in candidates.prefix(GatewayDirectory.waveSize) where g != winner {
+        // Only the ones that really didn't answer: a gateway that simply lost the
+        // race is fine, and is what the phone asks for a second opinion.
+        for g in failed {
             localFailures[g.endpoint] = now
         }
         return winner
