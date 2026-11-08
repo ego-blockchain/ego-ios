@@ -65,4 +65,19 @@ public extension Array where Element == HistoryItem {
         guard let wanted = ActivityDirection(kind: kind) else { return true }
         return allSatisfy { item in item.direction(for: me).map { $0 == wanted } ?? true }
     }
+
+    func only(kind: String, for me: String) -> [HistoryItem] {
+        guard let wanted = ActivityDirection(kind: kind) else { return self }
+        return filter { $0.direction(for: me) == wanted }
+    }
+
+    static func union(_ lists: [[HistoryItem]], keep: Int) -> [HistoryItem] {
+        var seen = Set<String>()
+        var out: [HistoryItem] = []
+        for item in lists.joined() where seen.insert(item.hash).inserted {
+            out.append(item)
+        }
+        out.sort { $0.timestamp != $1.timestamp ? $0.timestamp > $1.timestamp : $0.hash < $1.hash }
+        return Array(out.prefix(keep))
+    }
 }

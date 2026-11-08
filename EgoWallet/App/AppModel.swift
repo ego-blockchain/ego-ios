@@ -42,6 +42,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var historyLimit = AppModel.historyStep
     static let historyStep = 50
     static let historyMax = 500
+    static let historySources = 3
+    static let historyKeep = 2_000
 
     /// Whether the gateway may have transactions older than the ones loaded.
     var mayHaveOlderHistory: Bool {
@@ -499,19 +501,36 @@ final class AppModel: ObservableObject {
     /// Only sent, received or rewards, asked of the network: a busy node's rewards
     /// would otherwise fill every page of the newest history.
     func history(kind: String, limit: Int) async throws -> [HistoryItem] {
+        guard online else { throw WalletError.offline }
         let address = self.address
-        let first = try await perform { try await $0.history(of: address, limit: limit, kind: kind) }
-        if first.honors(kind: kind, for: address) {
-            remember(first, kind: kind, for: address)
-            return first
+        var clients = [try await gateway()]
+        for other in await gatewayCandidates() where clients.count < AppModel.historySources
+            && !clients.contains(where: { $0.gateway.endpoint == other.gateway.endpoint }) {
+            clients.append(other)
         }
-        for client in await gatewayCandidates().dropFirst() {
-            if let list = try? await client.history(of: address, limit: limit, kind: kind), list.honors(kind: kind, for: address) {
-                remember(list, kind: kind, for: address)
-                return list
+        var answers: [[HistoryItem]] = []
+        var failure: Error?
+        await withTaskGroup(of: Result<[HistoryItem], Error>.self) { group in
+            for client in clients {
+                group.addTask {
+                    do { return .success(try await client.history(of: address, limit: limit, kind: kind)) }
+                    catch { return .failure(error) }
+                }
+            }
+            for await answer in group {
+                switch answer {
+                case .success(let list): answers.append(list.only(kind: kind, for: address))
+                case .failure(let error): failure = failure ?? error
+                }
             }
         }
-        return first
+        if answers.isEmpty {
+            await directory.reportFailure()
+            throw failure ?? (WalletError.offline as Error)
+        }
+        let merged = [HistoryItem].union(answers + [savedByKind[kind] ?? []], keep: AppModel.historyKeep)
+        remember(merged, kind: kind, for: address)
+        return merged
     }
 
     private func remember(_ list: [HistoryItem], kind: String, for address: String) {

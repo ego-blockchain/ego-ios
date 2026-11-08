@@ -50,4 +50,27 @@ final class ActivityTests: XCTestCase {
         XCTAssertEqual(tx(from: HistoryItem.nodePool, to: me, type: "faucet").direction(for: me), .reward)
         XCTAssertEqual(tx(from: "egot1you", to: me, type: "early_termination_refund").direction(for: me), .received)
     }
+
+    private func payment(_ hash: String, at ts: Int64, from: String = "egot1me", to: String = "egot1you", type: String = "transfer") -> HistoryItem {
+        let json = """
+        {"hash":"\(hash)","from":"\(from)","to":"\(to)","amount":5,"timestamp":\(ts),"tx_type":"\(type)"}
+        """
+        return try! JSONDecoder().decode(HistoryItem.self, from: Data(json.utf8))
+    }
+
+    func testAnswersFromSeveralDesktopsAndWhatWasSavedAreCombined() {
+        let partial = [payment("b", at: 20), payment("d", at: 40)]
+        let complete = [payment("a", at: 10), payment("b", at: 20), payment("c", at: 30), payment("d", at: 40)]
+        let saved = [payment("old", at: 5)]
+        let merged = [HistoryItem].union([partial, complete, saved], keep: 100)
+        XCTAssertEqual(merged.map(\.hash), ["d", "c", "b", "a", "old"], "newest first, each payment once, nothing seen before is forgotten")
+        XCTAssertEqual([HistoryItem].union([complete], keep: 2).map(\.hash), ["d", "c"])
+    }
+
+    func testAnAnswerThatIgnoresTheFilterStillGivesItsMatchingPayments() {
+        let mixed = [payment("s", at: 1), payment("r", at: 2, from: HistoryItem.nodePool, to: me, type: "reward"), payment("p", at: 3, from: me, to: me, type: "price_report")]
+        XCTAssertEqual(mixed.only(kind: "sent", for: me).map(\.hash), ["s"])
+        XCTAssertEqual(mixed.only(kind: "rewards", for: me).map(\.hash), ["r"])
+        XCTAssertEqual(mixed.only(kind: "received", for: me).map(\.hash), [])
+    }
 }
