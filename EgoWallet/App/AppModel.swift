@@ -170,10 +170,19 @@ final class AppModel: ObservableObject {
     func gatewayCandidates() async -> [GatewayClient] {
         var out: [GatewayClient] = []
         if let current = try? await gateway() { out.append(current) }
+        // Other Ego Desktops on this Wi-Fi first. An internet entry with the same
+        // certificate as one of them is that same computer behind this router,
+        // which usually can't be reached through its own public address from inside.
+        let nearby = await directory.nearby
+        let homeCerts = Set(nearby.compactMap(\.certSha256))
+        func add(_ g: Gateway, timeout: TimeInterval? = nil) {
+            guard !out.contains(where: { $0.gateway.endpoint == g.endpoint || ($0.gateway.certSha256 != nil && $0.gateway.certSha256 == g.certSha256) }) else { return }
+            out.append(timeout.map { GatewayClient(gateway: g, timeout: $0) } ?? GatewayClient(gateway: g))
+        }
+        for g in nearby { add(g) }
         for other in await directory.known.prefix(AppModel.notHereTries) {
-            guard let g = other.announcement.gateway,
-                  !out.contains(where: { $0.gateway.endpoint == g.endpoint }) else { continue }
-            out.append(GatewayClient(gateway: g, timeout: 8))
+            guard let g = other.announcement.gateway, !homeCerts.contains(g.certSha256 ?? "") else { continue }
+            add(g, timeout: 8)
         }
         return out
     }

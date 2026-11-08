@@ -208,6 +208,16 @@ public actor GatewayDirectory {
         ranked()
     }
 
+    /// Gateways on this network that answered recently (or were never tried),
+    /// for asking a second Ego Desktop without leaving the home network.
+    public var nearby: [Gateway] {
+        let now = clock()
+        return local.filter { g in
+            guard let failed = localFailures[g.endpoint], now >= failed else { return true }
+            return now - failed >= GatewayDirectory.localCooldown
+        }
+    }
+
     /// Gateways found on the local network. They come from Bonjour rather than a
     /// signed announcement, are never saved, and are tried before any gateway on
     /// the internet because the router may not loop its own public address back.
