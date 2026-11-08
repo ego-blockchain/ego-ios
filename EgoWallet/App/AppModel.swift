@@ -50,6 +50,7 @@ final class AppModel: ObservableObject {
         history.count >= historyLimit && historyLimit < AppModel.historyMax
     }
     @Published var gatewayHost: String?
+    @Published private(set) var balanceWarning: String?
     @Published var problem: String?
     @Published var seedMissing = false
     @Published var refreshing = false
@@ -240,6 +241,7 @@ final class AppModel: ObservableObject {
         let address = self.address
         do {
             balance = try await perform { try await $0.balance(of: address).uegoc }
+            Task { await crossCheckBalance() }
             let limit = historyLimit
             history = try await perform { try await $0.history(of: address, limit: limit) }
             credits = (try? await perform { try await $0.credits(of: address).credits }) ?? credits
@@ -438,15 +440,76 @@ final class AppModel: ObservableObject {
     /// checks whether it landed anyway before reporting a failure.
     func submit(_ tx: SignedTransaction, refreshAfter: Bool = true) async throws -> String {
         var hash = tx.hash
+        let current = try? await gateway()
+        let backupClient = await gatewayCandidates().first { $0.gateway.endpoint != current?.gateway.endpoint }
+        let backup = Task { () -> Bool in
+            guard let backupClient else { return false }
+            return (try? await backupClient.submit(tx)) != nil
+        }
         do {
             hash = try await perform { try await $0.submit(tx) }.txHash
         } catch {
             let submitted = tx.hash
-            let landed = try? await perform({ try await $0.isConfirmed(hash: submitted) })
-            guard landed == true else { throw error }
+            let viaBackup = await backup.value
+            let landed = viaBackup ? true : (try? await perform({ try await $0.isConfirmed(hash: submitted) })) == true
+            guard landed else { throw error }
         }
         if refreshAfter { Task { await refresh() } }
         return hash
+    }
+
+    static let balanceRecheck: Duration = .seconds(3)
+
+    private func balancesFromTwo() async -> (Balance?, Balance?) {
+        let address = self.address
+        let clients = Array(await gatewayCandidates().prefix(2))
+        guard clients.count == 2 else { return (nil, nil) }
+        var answers: [Int: Balance] = [:]
+        await withTaskGroup(of: (Int, Balance?).self) { group in
+            for (i, client) in clients.enumerated() {
+                group.addTask { (i, try? await client.balance(of: address)) }
+            }
+            for await (i, b) in group {
+                if let b { answers[i] = b }
+            }
+        }
+        return (answers[0], answers[1])
+    }
+
+    func crossCheckBalance() async {
+        var (a, b) = await balancesFromTwo()
+        if SecondOpinion.disagree(a, b) {
+            try? await Task.sleep(for: AppModel.balanceRecheck)
+            (a, b) = await balancesFromTwo()
+        }
+        if SecondOpinion.disagree(a, b), let a, let b {
+            balanceWarning = "Two Ego Desktops show different balances at the same block (\(Amount.format(a.uegoc, maxDecimals: 2)) and \(Amount.format(b.uegoc, maxDecimals: 2)) EGOC). One of them is wrong, so don't rely on this number until they agree."
+        } else {
+            balanceWarning = nil
+        }
+    }
+
+    enum BlockCheck: Equatable {
+        case pending
+        case checking(UInt64)
+        case confirmed(UInt64)
+        case oneSource(UInt64)
+    }
+
+    func blockCheck(of item: HistoryItem) async -> BlockCheck {
+        guard let height = item.blockHeight else { return .pending }
+        let hash = item.hash
+        let clients = Array(await gatewayCandidates().prefix(3))
+        var answers: [HistoryItem?] = []
+        await withTaskGroup(of: HistoryItem?.self) { group in
+            for client in clients {
+                group.addTask { (try? await client.transaction(hash: hash)) ?? nil }
+            }
+            for await answer in group { answers.append(answer) }
+        }
+        let seen = SecondOpinion.confirmations(of: hash, in: answers)
+        if seen.count >= 2 { return .confirmed(seen.height ?? height) }
+        return .oneSource(seen.height ?? height)
     }
 
     enum NodeLookup {

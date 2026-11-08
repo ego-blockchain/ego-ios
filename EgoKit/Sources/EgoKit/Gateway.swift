@@ -45,8 +45,26 @@ public enum GatewayError: Error, Equatable, LocalizedError {
     }
 }
 
-public struct Balance: Decodable, Equatable {
+public struct Balance: Decodable, Equatable, Sendable {
     public let uegoc: UInt64
+    public let height: UInt64?
+
+    public init(uegoc: UInt64, height: UInt64? = nil) {
+        self.uegoc = uegoc
+        self.height = height
+    }
+}
+
+public enum SecondOpinion {
+    public static func disagree(_ a: Balance?, _ b: Balance?) -> Bool {
+        guard let a, let b, let ha = a.height, let hb = b.height, ha == hb else { return false }
+        return a.uegoc != b.uegoc
+    }
+
+    public static func confirmations(of hash: String, in answers: [HistoryItem?]) -> (count: Int, height: UInt64?) {
+        let inBlock = answers.compactMap { $0 }.filter { $0.hash == hash && $0.blockHeight != nil }
+        return (inBlock.count, inBlock.compactMap { $0.blockHeight }.min())
+    }
 }
 
 public struct NonceInfo: Decodable, Equatable {
@@ -319,6 +337,10 @@ public final class GatewayClient: @unchecked Sendable {
 
     public func submit(_ tx: SignedTransaction) async throws -> SubmitResult {
         try await call("tx.submit", ["tx": tx])
+    }
+
+    public func transaction(hash: String) async throws -> HistoryItem? {
+        try await call("wallet.getTransaction", ["hash": hash])
     }
 
     public func isConfirmed(hash: String) async throws -> Bool {

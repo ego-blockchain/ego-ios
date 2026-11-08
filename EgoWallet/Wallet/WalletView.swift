@@ -83,6 +83,11 @@ struct WalletView: View {
                     .font(.caption)
                     .foregroundStyle(Brand.warning)
             }
+            if let warning = model.balanceWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Brand.warning)
+            }
             HStack(spacing: 12) {
                 Button {
                     sending = true
@@ -485,9 +490,29 @@ struct ActivityRow: View {
 struct TransactionDetailView: View {
     let item: HistoryItem
     let me: String
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var copied: String?
+    @State private var check: AppModel.BlockCheck?
+
+    private var checkText: String {
+        guard let height = item.blockHeight else { return "Pending" }
+        switch check ?? .checking(height) {
+        case .pending: return "Pending"
+        case .checking(let h): return "In block \(h), checking with a second Ego Desktop"
+        case .confirmed(let h): return "Confirmed in block \(h)"
+        case .oneSource(let h): return "In block \(h), so far seen by one Ego Desktop only"
+        }
+    }
+
+    private var checkTint: Color {
+        switch check {
+        case .confirmed: return Brand.mint
+        case .none where item.blockHeight != nil: return Brand.muted
+        default: return Brand.warning
+        }
+    }
 
     var body: some View {
         let kind = ActivityKind(item, me: me)
@@ -497,14 +522,15 @@ struct TransactionDetailView: View {
                 Text(counterparty).font(.footnote).foregroundStyle(Brand.muted)
             }
             HStack(spacing: 8) {
-                Circle().fill(item.blockHeight == nil ? Brand.warning : Brand.mint).frame(width: 8, height: 8)
-                Text(item.blockHeight.map { "Confirmed in block \($0)" } ?? "Pending")
+                Circle().fill(checkTint).frame(width: 8, height: 8)
+                Text(checkText)
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(item.blockHeight == nil ? Brand.warning : Brand.mint)
+                    .foregroundStyle(checkTint)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background((item.blockHeight == nil ? Brand.warning : Brand.mint).opacity(0.12), in: Capsule())
+            .background(checkTint.opacity(0.12), in: Capsule())
+            .task { check = await model.blockCheck(of: item) }
             .onTapGesture {
                 if let h = item.blockHeight, let url = EgoScan.block(h) { openURL(url) }
             }
