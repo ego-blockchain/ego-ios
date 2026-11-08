@@ -182,6 +182,7 @@ final class AppModel: ObservableObject {
         self.key = key
         address = key.address
         savedByKind = KindHistorySnapshot.load(from: kindHistoryURL, address: key.address)?.lists ?? [:]
+        AccountStore.shared.load(for: key)
         phase = .ready
         Task { await refresh() }
     }
@@ -189,10 +190,13 @@ final class AppModel: ObservableObject {
     func unlock() async {
         do {
             let seed = try await vault.readSeed(reason: "Unlock your Ego wallet")
-            key = try EgoKey(seed: seed)
+            let unlocked = try EgoKey(seed: seed)
+            key = unlocked
+            AccountStore.shared.load(for: unlocked)
             phase = .ready
             problem = nil
             await refresh()
+            Task { await AccountStore.shared.refresh(self) }
             if queued.contains(where: \.waiting) { keepFlushing() }
         } catch VaultError.cancelled {
             problem = nil
@@ -528,7 +532,8 @@ final class AppModel: ObservableObject {
             await directory.reportFailure()
             throw failure ?? (WalletError.offline as Error)
         }
-        let merged = [HistoryItem].union(answers + [savedByKind[kind] ?? []], keep: AppModel.historyKeep)
+        let fromDesktop = AccountStore.shared.payments.only(kind: kind, for: address)
+        let merged = [HistoryItem].union(answers + [fromDesktop, savedByKind[kind] ?? []], keep: AppModel.historyKeep)
         remember(merged, kind: kind, for: address)
         return merged
     }
@@ -659,6 +664,7 @@ final class AppModel: ObservableObject {
         try? FileManager.default.removeItem(at: snapshotURL)
         try? FileManager.default.removeItem(at: kindHistoryURL)
         savedByKind = [:]
+        AccountStore.shared.forget()
         lastUpdated = nil
         vault.delete()
         key = nil

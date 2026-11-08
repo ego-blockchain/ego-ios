@@ -89,7 +89,7 @@ public struct SubmitResult: Decodable, Equatable {
     enum CodingKeys: String, CodingKey { case txHash = "tx_hash" }
 }
 
-public struct HistoryItem: Codable, Equatable, Identifiable {
+public struct HistoryItem: Codable, Equatable, Identifiable, Sendable {
     public let hash: String
     public let from: String
     public let to: String
@@ -230,7 +230,7 @@ struct RPCEnvelope<R: Decodable>: Decodable {
 
 struct Empty: Codable {}
 
-public final class GatewayClient {
+public final class GatewayClient: @unchecked Sendable {
     public let gateway: Gateway
     private let session: URLSession
     private let timeout: TimeInterval

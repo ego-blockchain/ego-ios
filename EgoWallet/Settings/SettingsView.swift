@@ -27,6 +27,7 @@ struct SettingsView: View {
                             link(StakingPage(), "lock.circle.fill", Brand.mint, "Staking", "Lock EGOC to secure the network and to vote")
                         }
                         walletCard
+                        BundleCard()
                         AuthenticatorCard(address: app.address)
                         networkCard
                         if !blocklist.blocked.isEmpty { blockedCard }

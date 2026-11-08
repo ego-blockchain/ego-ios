@@ -325,6 +325,7 @@ struct LibraryView: View {
                 }
                 if let problem = store.problem { ProblemBanner(text: problem) }
                 waitingNote
+                DesktopFilesSection()
                 if shown.isEmpty {
                     empty
                 } else {
