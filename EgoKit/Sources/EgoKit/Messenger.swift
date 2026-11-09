@@ -396,15 +396,28 @@ public enum Field25519 {
     static let twoP: Fe = [0xFFFF_FFFF_FFFF_FFDA, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF, 0xFFFF_FFFF_FFFF_FFFF]
     static let one: Fe = [1, 0, 0, 0]
 
+    // Plain loops: the closure versions took the CI compiler past its type-checking time limit.
     static func load(_ bytes: [UInt8]) -> Fe {
-        (0..<4).map { i in
-            (0..<8).reduce(UInt64(0)) { acc, j in acc | UInt64(bytes[i * 8 + j]) << (8 * UInt64(j)) }
+        var out = Fe(repeating: 0, count: 4)
+        for i in 0..<4 {
+            var word: UInt64 = 0
+            for j in 0..<8 {
+                let byte = UInt64(bytes[i * 8 + j])
+                word |= byte << UInt64(8 * j)
+            }
+            out[i] = word
         }
+        return out
     }
 
     static func store(_ a: Fe) -> [UInt8] {
         let x = freeze(a)
-        return (0..<32).map { i in UInt8(truncatingIfNeeded: x[i / 8] >> (8 * UInt64(i % 8))) }
+        var out = [UInt8](repeating: 0, count: 32)
+        for i in 0..<32 {
+            let shift = UInt64(8 * (i % 8))
+            out[i] = UInt8(truncatingIfNeeded: x[i / 8] >> shift)
+        }
+        return out
     }
 
     static func less(_ a: Fe, _ b: Fe) -> Bool {
