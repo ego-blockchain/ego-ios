@@ -58,7 +58,7 @@ enum MainTab: Int, CaseIterable {
         switch self {
         case .wallet: "Wallet"
         case .storage: "Storage"
-        case .chat: "Chat"
+        case .chat: "Messenger"
         case .market: "Market"
         case .settings: "Settings"
         }
@@ -118,7 +118,7 @@ struct MainTabs: View {
         switch section {
         case .wallet: WalletView()
         case .storage: StorageView()
-        case .chat: ChatView()
+        case .chat: MessengerView()
         case .market: MarketView()
         case .settings: SettingsView()
         }
@@ -156,7 +156,7 @@ struct MainTabs: View {
                 case .earnings: EarningsView()
                 }
             }
-            .navigationDestination(for: ProfilePage.self) { _ in ChatProfileView() }
+            .navigationDestination(for: MessengerPage.self) { page in MessengerPageView(page: page) }
             .navigationDestination(for: StakingPage.self) { _ in StakingView() }
             .navigationDestination(for: GovernancePage.self) { _ in GovernanceView() }
             .navigationDestination(for: HoldsPage.self) { _ in HoldsView() }
@@ -426,25 +426,6 @@ enum DemoFlow {
     /// Fills the screens with made-up content for App Store screenshots.
     static var sample: Bool { ProcessInfo.processInfo.arguments.contains("-sample") }
 
-    static var demoFeed: ChatFeed {
-        let now = Int64(Date().timeIntervalSince1970)
-        func post(_ id: Int, _ from: String, _ name: String, _ body: String, mine: Bool = false, votes: Int = 0, reactions: String = "[]") -> String {
-            let until = mine ? "\(now + 1800)" : "null"
-            return #"{"id":"p\#(id)","from":"\#(from)","name":"\#(name)","body":"\#(body)","ts":\#(now - Int64(600 - id * 60)),"mine":\#(mine),"edited":false,"change_until":\#(until),"removal_votes":\#(votes),"my_vote":false,"removed_until":null,"reactions":\#(reactions)}"#
-        }
-        let posts = [
-            post(1, "egot1qk2v8xw0a9m3", "Lena", "Just set up a node on my old laptop. Storage page is super clear."),
-            post(2, "egot1qk2v8xw0a9m3", "Lena", "Anyone else sharing space from home?"),
-            post(3, "egot1zz8y7rp4c2nd", "", "Running two desktops here, 400 GB shared.", reactions: #"[{"emoji":"🔥","count":3,"mine":true},{"emoji":"👍","count":1,"mine":false}]"#),
-            post(7, "egot1zz8y7rp4c2nd", "", "Paid for my plan in two taps 🚀"),
-            post(8, "egot1qk2v8xw0a9m3", "Lena", "🎉🎉"),
-            post(4, "egot1me00000000000", "Ari", "Same, the phone app picks it up right away 🙌", mine: true),
-            post(5, "egot1me00000000000", "Ari", "Delete now removes the copies everywhere too.", mine: true),
-        ].joined(separator: ",")
-        let json = #"{"me":"egot1me00000000000","my_name":"Ari","my_removed_until":null,"threshold":5,"ban_days":14,"oldest":null,"posts":[\#(posts)]}"#
-        return try! JSONDecoder().decode(ChatFeed.self, from: Data(json.utf8))
-    }
-
     @MainActor @ViewBuilder static var view: some View {
         switch current {
         case "receive": ReceiveView(address: "egot1yr99jpx3lq7s6m5kt0dz4n8c2w9vfh3g5qvqckfx")
@@ -463,23 +444,6 @@ enum DemoFlow {
             FileDetailView(file: LibraryFile(file: try! FileCrypto.encrypt(Data(repeating: 7, count: 300_000)), name: "Beach trip.pdf"))
                 .environmentObject(StorageStore())
         case "planssheet": NavigationStack { PlansPage(firstTime: false) }.environmentObject(StorageStore())
-        case "chat":
-            ZStack {
-                AuroraBackground(intensity: 0.55, colors: Brand.chatAurora)
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ChatIntro(feed: demoFeed)
-                        DayDivider(date: Date())
-                        ForEach(Array(demoFeed.posts.enumerated()), id: \.element.id) { i, post in
-                            ChatBubble(post: post, threshold: 5,
-                                       first: i == 0 || demoFeed.posts[i - 1].from != post.from,
-                                       last: i + 1 == demoFeed.posts.count || demoFeed.posts[i + 1].from != post.from)
-                        }
-                    }
-                    .padding(12)
-                }
-            }
-            .environmentObject(StorageStore())
         case "done":
             FlowSheet(icon: "arrow.up.right", title: "On its way", step: 2) {
                 SuccessBurst(title: "Sent", subtitle: "It shows as pending until the network confirms it.")

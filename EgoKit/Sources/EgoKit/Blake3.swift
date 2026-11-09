@@ -12,6 +12,8 @@ public enum Blake3 {
     static let chunkEnd: UInt32 = 2
     static let parent: UInt32 = 4
     static let root: UInt32 = 8
+    static let deriveKeyContext: UInt32 = 32
+    static let deriveKeyMaterial: UInt32 = 64
     static let blockLen = 64
     static let chunkLen = 1024
 
@@ -19,6 +21,22 @@ public enum Blake3 {
         var hasher = Hasher()
         hasher.update(input)
         return hasher.finalize()
+    }
+
+    public static func deriveKey(context: String, material: [UInt8]) -> [UInt8] {
+        var contextHasher = Hasher(key: iv, flags: deriveKeyContext)
+        contextHasher.update(Array(context.utf8))
+        let contextKey = contextHasher.finalize()
+        var hasher = Hasher(key: keyWords(contextKey), flags: deriveKeyMaterial)
+        hasher.update(material)
+        return hasher.finalize()
+    }
+
+    static func keyWords(_ bytes: [UInt8]) -> [UInt32] {
+        (0..<8).map { i in
+            let j = i * 4
+            return UInt32(bytes[j]) | UInt32(bytes[j + 1]) << 8 | UInt32(bytes[j + 2]) << 16 | UInt32(bytes[j + 3]) << 24
+        }
     }
 
     public static func hex(_ input: [UInt8]) -> String {
@@ -114,13 +132,15 @@ public enum Blake3 {
     struct ChunkState {
         var cv: [UInt32]
         let counter: UInt64
+        let flags: UInt32
         var block = [UInt8](repeating: 0, count: 64)
         var blockLen = 0
         var compressed = 0
 
-        init(counter: UInt64) {
-            cv = iv
+        init(key: [UInt32], counter: UInt64, flags: UInt32) {
+            cv = key
             self.counter = counter
+            self.flags = flags
         }
 
         var length: Int { blockLen + compressed * blockLenConst }
@@ -131,7 +151,7 @@ public enum Blake3 {
             var rest = input
             while !rest.isEmpty {
                 if blockLen == 64 {
-                    cv = Array(compress(cv: cv, block: words(block), counter: counter, blockLen: 64, flags: startFlag).prefix(8))
+                    cv = Array(compress(cv: cv, block: words(block), counter: counter, blockLen: 64, flags: flags | startFlag).prefix(8))
                     compressed += 1
                     block = [UInt8](repeating: 0, count: 64)
                     blockLen = 0
@@ -146,23 +166,31 @@ public enum Blake3 {
         }
 
         func output() -> Output {
-            Output(cv: cv, block: words(block), counter: counter, blockLen: UInt32(blockLen), flags: startFlag | chunkEnd)
+            Output(cv: cv, block: words(block), counter: counter, blockLen: UInt32(blockLen), flags: flags | startFlag | chunkEnd)
         }
     }
 
     struct Hasher {
-        var chunk = ChunkState(counter: 0)
+        let key: [UInt32]
+        let flags: UInt32
+        var chunk: ChunkState
         var stack: [[UInt32]] = []
 
-        static func parentOutput(_ left: [UInt32], _ right: [UInt32]) -> Output {
-            Output(cv: iv, block: left + right, counter: 0, blockLen: 64, flags: parent)
+        init(key: [UInt32] = Blake3.iv, flags: UInt32 = 0) {
+            self.key = key
+            self.flags = flags
+            chunk = ChunkState(key: key, counter: 0, flags: flags)
+        }
+
+        func parentOutput(_ left: [UInt32], _ right: [UInt32]) -> Output {
+            Output(cv: key, block: left + right, counter: 0, blockLen: 64, flags: parent | flags)
         }
 
         mutating func push(_ cv: [UInt32], totalChunks: UInt64) {
             var newCV = cv
             var total = totalChunks
             while total & 1 == 0 {
-                newCV = Hasher.parentOutput(stack.removeLast(), newCV).chainingValue()
+                newCV = parentOutput(stack.removeLast(), newCV).chainingValue()
                 total >>= 1
             }
             stack.append(newCV)
@@ -175,7 +203,7 @@ public enum Blake3 {
                     let cv = chunk.output().chainingValue()
                     let total = chunk.counter + 1
                     push(cv, totalChunks: total)
-                    chunk = ChunkState(counter: total)
+                    chunk = ChunkState(key: key, counter: total, flags: flags)
                 }
                 let take = min(chunkLen - chunk.length, rest.count)
                 chunk.update(rest.prefix(take))
@@ -188,7 +216,7 @@ public enum Blake3 {
             var remaining = stack.count
             while remaining > 0 {
                 remaining -= 1
-                output = Hasher.parentOutput(stack[remaining], output.chainingValue())
+                output = parentOutput(stack[remaining], output.chainingValue())
             }
             return output.rootBytes()
         }

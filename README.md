@@ -1,13 +1,13 @@
 # Ego Wallet for iPhone
 
-Ego Wallet for iPhone holds EGOC, shows live Ego storage capacity, joins the Governance community chat and browses the P2P market. Keys never leave the phone. Every transaction and chat message is signed on the device.
+Ego Wallet for iPhone holds EGOC, shows live Ego storage capacity, has Messenger with Ego AI and your Ego Desktop's contacts, and browses the P2P market. Keys never leave the phone. Every transaction is signed and every message is encrypted on the device.
 
 ## What's here
 
 | Path | What it is |
 | --- | --- |
-| `EgoKit/` | Swift package with keys, addresses, the 24-word phrase, transaction and chat signing, gateway discovery and market models. It is byte-compatible with Ego Desktop and the browser extension. |
-| `EgoWallet/` | The SwiftUI app, with five tabs: Wallet, Storage, Chat, Market and Settings. |
+| `EgoKit/` | Swift package with keys, addresses, the 24-word phrase, transaction signing, Messenger encryption, gateway discovery and market models. It is byte-compatible with Ego Desktop and the browser extension. |
+| `EgoWallet/` | The SwiftUI app, with five tabs: Wallet, Storage, Messenger, Market and Settings. |
 | `project.yml` | XcodeGen spec that generates the Xcode project. |
 
 ## Build on a Mac
@@ -43,4 +43,4 @@ A phone on the same Wi-Fi as a serving desktop doesn't need any of this. The des
 
 - **Uploading files from the phone.** The Storage tab already shows live free space and how many computers provide it.
 - **Trading from the phone.** The Market tab lists live offers with prices, limits, methods and trader records. Trades still open in Ego Desktop.
-- **Proof of what a gateway says.** A dishonest gateway can't move anyone's coins, because everything is signed on the phone. It could still show a wrong balance or hide chat posts. The next step is to cross-check two gateways or verify chain proofs.
+- **Proof of what a gateway says.** A dishonest gateway can't move anyone's coins, because everything is signed on the phone. It could still show a wrong balance or hold back messages. The next step is to cross-check two gateways or verify chain proofs.

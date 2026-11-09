@@ -3,7 +3,7 @@ import XCTest
 /// Opens every main screen and keeps a screenshot of each, to check new iPhone sizes.
 final class ScreenTests: XCTestCase {
     func testEveryScreen() {
-        for tab in ["wallet", "storage", "chat", "market", "settings"] {
+        for tab in ["wallet", "storage", "messenger", "market", "settings"] {
             let app = XCUIApplication()
             app.launchArguments = ["-demo", "tabs", "-tab", tab]
             app.launch()

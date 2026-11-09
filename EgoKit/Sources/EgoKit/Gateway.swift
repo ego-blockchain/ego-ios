@@ -128,95 +128,6 @@ public struct HistoryItem: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-public struct ChatPostView: Decodable, Equatable, Identifiable {
-    public let id: String
-    public let from: String
-    public let name: String
-    public let body: String
-    public let ts: Int64
-    public let mine: Bool
-    public let edited: Bool
-    public let changeUntil: Int64?
-    public let removalVotes: Int
-    public let myVote: Bool
-    public let removedUntil: Int64?
-    /// The author's profile picture link; nodes before reactions and pictures don't send it.
-    public let avatarLink: String?
-    public let reactionCounts: [ChatReaction]?
-
-    public var avatar: String { avatarLink ?? "" }
-    public var reactions: [ChatReaction] { reactionCounts ?? [] }
-
-    enum CodingKeys: String, CodingKey {
-        case id, from, name, body, ts, mine, edited
-        case avatarLink = "avatar"
-        case reactionCounts = "reactions"
-        case changeUntil = "change_until"
-        case removalVotes = "removal_votes"
-        case myVote = "my_vote"
-        case removedUntil = "removed_until"
-    }
-}
-
-/// One person's record in the community chat.
-public struct ChatMember: Decodable, Equatable {
-    public let address: String
-    public let name: String
-    public let avatar: String
-    public let posts: Int
-    public let firstPost: Int64?
-    public let lastPost: Int64?
-    public let reactionsReceived: Int
-    public let removalVotes: Int
-    public let threshold: Int
-    public let voteDays: Int
-    public let banDays: Int
-    public let myVote: Bool
-    public let removals: Int
-    public let removedUntil: Int64?
-    public let removedForGood: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case address, name, avatar, posts, threshold, removals
-        case firstPost = "first_post"
-        case lastPost = "last_post"
-        case reactionsReceived = "reactions_received"
-        case removalVotes = "removal_votes"
-        case voteDays = "vote_days"
-        case banDays = "ban_days"
-        case myVote = "my_vote"
-        case removedUntil = "removed_until"
-        case removedForGood = "removed_for_good"
-    }
-}
-
-public struct ChatReaction: Decodable, Equatable, Hashable {
-    public let emoji: String
-    public let count: Int
-    public let mine: Bool
-}
-
-public struct ChatFeed: Decodable, Equatable {
-    public let me: String
-    public let myName: String
-    public let myAvatarLink: String?
-    public let myRemovedUntil: Int64?
-
-    public var myAvatar: String { myAvatarLink ?? "" }
-    public let threshold: Int
-    public let banDays: Int
-    public var posts: [ChatPostView]
-    public let oldest: Int64?
-
-    enum CodingKeys: String, CodingKey {
-        case me, threshold, posts, oldest
-        case myName = "my_name"
-        case myAvatarLink = "my_avatar"
-        case myRemovedUntil = "my_removed_until"
-        case banDays = "ban_days"
-    }
-}
-
 public struct StorageCapacity: Decodable, Equatable {
     public let providers: Int
     public let freeBytes: UInt64
@@ -347,20 +258,6 @@ public final class GatewayClient: @unchecked Sendable {
         struct Found: Decodable { let hash: String; let status: String? }
         let found: Found? = try await call("wallet.getTransaction", ["hash": hash])
         return found?.hash == hash
-    }
-
-    public func chatFeed(viewer: String, before: Int64? = nil) async throws -> ChatFeed {
-        struct Params: Encodable { let viewer: String; let before: Int64? }
-        return try await call("chat.feed", Params(viewer: viewer, before: before))
-    }
-
-    public func chatMember(address: String, viewer: String) async throws -> ChatMember {
-        try await call("chat.member", ["address": address, "viewer": viewer])
-    }
-
-    public func chatSubmit(_ wire: ChatWire) async throws {
-        struct Accepted: Decodable { let accepted: Bool }
-        let _: Accepted = try await call("chat.submit", ["wire": wire])
     }
 
     public func storageCapacity() async throws -> StorageCapacity {

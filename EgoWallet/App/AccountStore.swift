@@ -26,6 +26,10 @@ final class AccountStore: ObservableObject {
     var contacts: [AccountRecord.Contact] { desktop?.contacts ?? [] }
     var files: [AccountRecord.File] { desktop?.files ?? [] }
     var payments: [HistoryItem] { desktop?.payments ?? [] }
+    var allSent: [AccountRecord.Sent] { phone.sent }
+    var phoneContent: AccountRecord.Content { phone }
+    var desktopCard: String { desktop?.bundle ?? "" }
+    var desktopName: String { desktop?.name ?? "" }
 
     func load(for key: EgoKey) {
         owner = key.address
@@ -64,7 +68,7 @@ final class AccountStore: ObservableObject {
         try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
-    private func places(_ app: AppModel, for owner: String) async -> [GatewayClient] {
+    func places(_ app: AppModel, for owner: String) async -> [GatewayClient] {
         var clients = await app.gatewayCandidates()
         let known = await app.directory.known
         let chosen = AccountRecord.places(owner: owner, nodes: known.map(\.announcement.node))
@@ -114,8 +118,16 @@ final class AccountStore: ObservableObject {
             let known = Set(phone.sent.map(\.id))
             phone.sent = (phone.sent + content.sent.filter { !known.contains($0.id) }).sorted { $0.ts > $1.ts }
             phone.sent = Array(phone.sent.prefix(AccountRecord.maxSent))
+            let knownContacts = Set(phone.contacts.map(\.address))
+            phone.contacts += content.contacts.filter { !knownContacts.contains($0.address) }
+            if phone.token.isEmpty { phone.token = content.token }
+            if content.avatarAt > phone.avatarAt {
+                phone.avatar = content.avatar
+                phone.avatarAt = content.avatarAt
+            }
+            phone.wantHistory = max(phone.wantHistory, content.wantHistory)
             phoneVersion = newest.ver
-            phoneDirty = phoneDirty || phone.sent.count != content.sent.count
+            phoneDirty = phoneDirty || phone.sent.count != content.sent.count || phone.contacts.count != content.contacts.count
         }
         if desktop == nil && desktops.isEmpty && clients.isEmpty {
             problem = "No Ego Desktop can be reached right now."
@@ -147,8 +159,29 @@ final class AccountStore: ObservableObject {
                                                     text: link, sharedKeyHex: contact.sharedKeyHex)
         let delivery = try AccountRecord.delivery(of: message.bundle, to: contact, ts: ts, with: key)
         try await app.perform { try await $0.deliver(delivery) }
-        phone.sent.insert(AccountRecord.Sent(id: message.id, to: contact.address, content: link, messageType: "file_bundle", ts: ts), at: 0)
+        await recordSent(AccountRecord.Sent(id: message.id, to: contact.address, content: link, messageType: "file_bundle", ts: ts), app: app)
+    }
+
+    func recordSent(_ sent: AccountRecord.Sent, app: AppModel) async {
+        guard let key = app.key else { return }
+        if owner != key.address { load(for: key) }
+        phone.sent.insert(sent, at: 0)
         phone.sent = Array(phone.sent.prefix(AccountRecord.maxSent))
+        phoneDirty = true
+        await publishPhone(app, key: key)
+    }
+
+    func updatePhone(_ app: AppModel, _ change: (inout AccountRecord.Content) -> Void) async {
+        guard let key = app.key else { return }
+        if owner != key.address { load(for: key) }
+        change(&phone)
+        phoneDirty = true
+        await publishPhone(app, key: key)
+    }
+
+    func announcePhone(_ app: AppModel) async {
+        guard let key = app.key, phoneVersion == 0 else { return }
+        if owner != key.address { load(for: key) }
         phoneDirty = true
         await publishPhone(app, key: key)
     }

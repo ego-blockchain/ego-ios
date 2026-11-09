@@ -11,8 +11,6 @@ struct SettingsView: View {
     @StateObject private var gate = AuthGate()
 
 
-    @ObservedObject private var blocklist = ChatBlocklist.shared
-
     var body: some View {
         Group {
             ZStack {
@@ -22,7 +20,6 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         PageTitle("Settings")
                         VStack(spacing: 10) {
-                            link(ProfilePage(), "person.crop.circle.fill", Brand.violet, "Chat profile", "Your name and picture in the community chat")
                             link(GovernancePage(), "building.columns.fill", Brand.lime, "Governance", "Vote on proposals and create your own")
                             link(StakingPage(), "lock.circle.fill", Brand.mint, "Staking", "Lock EGOC to secure the network and to vote")
                         }
@@ -30,7 +27,6 @@ struct SettingsView: View {
                         BundleCard()
                         AuthenticatorCard(address: app.address)
                         networkCard
-                        if !blocklist.blocked.isEmpty { blockedCard }
                         GlassCard {
                             SectionLabel(text: "About")
                             Link(destination: Legal.terms) { rowLabel("Terms of Service", icon: "doc.text") }
@@ -146,20 +142,6 @@ struct SettingsView: View {
         }
     }
 
-    private var blockedCard: some View {
-        GlassCard {
-            SectionLabel(text: "Blocked in chat")
-            ForEach(blocklist.blocked, id: \.self) { address in
-                HStack {
-                    Text(shortAddress(address)).font(.system(.footnote, design: .monospaced)).foregroundStyle(Brand.text)
-                    Spacer()
-                    Button("Unblock") { blocklist.unblock(address) }
-                        .font(.footnote.weight(.semibold)).foregroundStyle(Brand.lime)
-                }
-            }
-            Text("Their messages don't show on this iPhone.").font(.caption).foregroundStyle(Brand.muted)
-        }
-    }
 
     private func logOut() async {
         do {

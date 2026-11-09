@@ -135,45 +135,6 @@ final class EgoKitTests: XCTestCase {
         XCTAssertEqual(Amount.format(1_000_000), "1")
     }
 
-    func testChatBytesAndIdsMatchTheNode() throws {
-        let from = "egot1yzwkx349luk82ksl0xe2tm6rfwj26t7pg5apncg2"
-        let post = ChatPost(from: from, name: "Artit", body: "hello\nego", ts: 1_800_000_000, pubkey: "", sig: "")
-        XCTAssertEqual(String(decoding: post.signingBytes, as: UTF8.self), "ego/dao-chat/post/v1\n\(from)\n1800000000\nArtit\nhello\nego")
-        XCTAssertEqual(post.id, "cb73b6f6aed5d28c2e7546f860543c1e")
-        let edit = ChatEdit(from: from, postId: post.id, postTs: post.ts, body: "hello again", ts: 1_800_000_003, pubkey: "", sig: "")
-        XCTAssertEqual(String(decoding: edit.signingBytes, as: UTF8.self), "ego/dao-chat/edit/v1\n\(from)\ncb73b6f6aed5d28c2e7546f860543c1e\n1800000000\n1800000003\nhello again")
-        let delete = ChatDelete(from: from, postId: post.id, postTs: post.ts, ts: 1_800_000_004, pubkey: "", sig: "")
-        XCTAssertEqual(String(decoding: delete.signingBytes, as: UTF8.self), "ego/dao-chat/delete/v1\n\(from)\ncb73b6f6aed5d28c2e7546f860543c1e\n1800000000\n1800000004")
-    }
-
-    func testChatMessagesAreSignedAndTaggedForTheGateway() throws {
-        let key = try EgoKey(seed: Hex.decode(vectors.keys[2].seed)!)
-        let post = try ChatSigner.post(key: key, name: "Phone", body: "from my iPhone", ts: 1_800_000_000)
-        XCTAssertEqual(post.from, key.address)
-        XCTAssertTrue(EgoKey.verify(signature: Hex.decode(post.sig)!, message: post.signingBytes, publicKey: key.publicKey))
-        let json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ChatWire.post(post))) as! [String: Any]
-        XCTAssertEqual(json["kind"] as? String, "post")
-        XCTAssertEqual(json["body"] as? String, "from my iPhone")
-        let edit = try ChatSigner.edit(key: key, postId: post.id, postTs: post.ts, body: "edited", ts: 1_800_000_100)
-        let editJson = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ChatWire.edit(edit))) as! [String: Any]
-        XCTAssertEqual(editJson["kind"] as? String, "edit")
-        XCTAssertEqual(editJson["post_id"] as? String, post.id)
-        XCTAssertEqual(editJson["post_ts"] as? Int, 1_800_000_000)
-    }
-
-    func testChatTextRulesMatchTheNode() {
-        XCTAssertNil(ChatRules.cleanBody("   "))
-        XCTAssertNil(ChatRules.cleanBody(String(repeating: "x", count: ChatRules.maxBodyCharacters + 1)))
-        XCTAssertNil(ChatRules.cleanBody("bell\u{7}"))
-        XCTAssertEqual(ChatRules.cleanBody("  two\nlines  "), "two\nlines")
-        XCTAssertNil(ChatRules.cleanBody(Array(repeating: "l", count: ChatRules.maxLines + 1).joined(separator: "\n")))
-        XCTAssertEqual(ChatRules.cleanName("  Artit "), "Artit")
-        XCTAssertNil(ChatRules.cleanName(String(repeating: "n", count: 25)))
-        XCTAssertNil(ChatRules.cleanName("tab\there"))
-        XCTAssertTrue(ChatRules.canChange(postTimestamp: 1_000, now: 1_000 + 3_599))
-        XCTAssertFalse(ChatRules.canChange(postTimestamp: 1_000, now: 1_000 + 3_600))
-    }
-
     func testANullResultMeansNothingOnlyWhereNothingIsAllowed() throws {
         struct Found: Decodable { let hash: String }
         let envelope = try JSONDecoder().decode(RPCEnvelope<Found?>.self, from: Data(#"{"jsonrpc":"2.0","id":3,"result":null}"#.utf8))

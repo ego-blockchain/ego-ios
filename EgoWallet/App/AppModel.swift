@@ -746,6 +746,7 @@ final class AppModel: ObservableObject {
         try? FileManager.default.removeItem(at: kindHistoryURL)
         savedByKind = [:]
         AccountStore.shared.forget()
+        MessengerStore.shared.forget()
         lastUpdated = nil
         vault.delete()
         key = nil

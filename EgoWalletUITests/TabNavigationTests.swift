@@ -22,23 +22,6 @@ final class TabNavigationTests: XCTestCase {
         }
     }
 
-    func testChatProfileOpensEveryTime() {
-        let app = XCUIApplication()
-        app.launchArguments = ["-demo", "tabs", "-tab", "settings"]
-        app.launch()
-
-        let row = app.buttons.containing(NSPredicate(format: "label CONTAINS 'Chat profile'")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 20), "no Chat profile row")
-        for round in 1...3 {
-            row.tap()
-            let back = app.navigationBars.buttons.firstMatch
-            XCTAssertTrue(back.waitForExistence(timeout: 5), "Chat profile didn't open on try \(round)")
-            back.tap()
-            XCTAssertTrue(row.waitForExistence(timeout: 5), "didn't come back on try \(round)")
-            sleep(1)
-        }
-    }
-
     /// Coming back to the Wallet tab shows the Wallet, and Earnings still opens.
     func testWalletTabShowsWallet() {
         let app = XCUIApplication()
@@ -58,7 +41,7 @@ final class TabNavigationTests: XCTestCase {
         XCTAssertTrue(back.waitForExistence(timeout: 5))
         back.tap()
         sleep(1)
-        for other in ["Chat", "Settings"] {
+        for other in ["Messenger", "Settings"] {
             goToTab(other)
             goToTab("Wallet")
             XCTAssertFalse(back.exists, "Earnings showed after going back, then to \(other) and Wallet")
@@ -68,7 +51,7 @@ final class TabNavigationTests: XCTestCase {
         // Still opens after the trip, and Back leaves the Wallet showing.
         card.tap()
         XCTAssertTrue(back.waitForExistence(timeout: 5), "Earnings didn't open after visiting other tabs")
-        XCTAssertFalse(app.buttons["Chat"].isHittable, "the tab bar shows over Earnings")
+        XCTAssertFalse(app.buttons["Messenger"].isHittable, "the tab bar shows over Earnings")
         back.tap()
         XCTAssertTrue(card.waitForExistence(timeout: 5))
         sleep(1)

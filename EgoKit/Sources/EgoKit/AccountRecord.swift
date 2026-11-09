@@ -134,6 +134,10 @@ public enum AccountRecord {
         public var files: [File]
         public var payments: [HistoryItem]
         public var sent: [Sent]
+        public var wantHistory: Int64 = 0
+        public var avatar: String = ""
+        public var avatarAt: Int64 = 0
+        public var token: String = ""
 
         public init(v: UInt32 = 1, name: String = "", bundle: String = "", contacts: [Contact] = [], files: [File] = [], payments: [HistoryItem] = [], sent: [Sent] = []) {
             self.v = v
@@ -146,7 +150,9 @@ public enum AccountRecord {
         }
 
         enum CodingKeys: String, CodingKey {
-            case v, name, bundle, contacts, files, payments, sent
+            case v, name, bundle, contacts, files, payments, sent, avatar, token
+            case wantHistory = "want_history"
+            case avatarAt = "avatar_at"
         }
 
         public init(from decoder: Decoder) throws {
@@ -158,6 +164,10 @@ public enum AccountRecord {
             files = try c.decodeIfPresent([File].self, forKey: .files) ?? []
             payments = try c.decodeIfPresent([HistoryItem].self, forKey: .payments) ?? []
             sent = try c.decodeIfPresent([Sent].self, forKey: .sent) ?? []
+            wantHistory = try c.decodeIfPresent(Int64.self, forKey: .wantHistory) ?? 0
+            avatar = try c.decodeIfPresent(String.self, forKey: .avatar) ?? ""
+            avatarAt = try c.decodeIfPresent(Int64.self, forKey: .avatarAt) ?? 0
+            token = try c.decodeIfPresent(String.self, forKey: .token) ?? ""
         }
     }
 
