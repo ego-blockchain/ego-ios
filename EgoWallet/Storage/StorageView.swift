@@ -292,6 +292,7 @@ struct LibraryView: View {
     @State private var importing = false
     @State private var opened: LibraryFile?
     @State private var confirmStopRenew = false
+    @State private var openingLink = false
 
     private var shown: [LibraryFile] { store.files(of: filter) }
 
@@ -302,6 +303,8 @@ struct LibraryView: View {
                     Menu {
                         Button { pickingPhotos = true } label: { Label("Photos & Videos", systemImage: "photo.on.rectangle") }
                         Button { importing = true } label: { Label("Files", systemImage: "folder") }
+                        Divider()
+                        Button { openingLink = true } label: { Label("Open an Ego link", systemImage: "link") }
                     } label: {
                         Label("Add", systemImage: "plus")
                             .font(.system(.subheadline, design: .rounded, weight: .bold))
@@ -355,6 +358,7 @@ struct LibraryView: View {
                 .presentationBackground(Brand.ink)
         }
         .sheet(item: $opened) { FileDetailView(file: $0) }
+        .sheet(isPresented: $openingLink) { OpenLinkView() }
     }
 
     private var usageCard: some View {
@@ -729,66 +733,31 @@ struct FileDetailView: View {
     @State private var opening = false
 
     var body: some View {
-        FlowSheet(icon: icon(file.kind), title: file.name, subtitle: "\(bytes(file.size)) · added \(relativeTime(file.addedAt))") {
-            preview
-            if let problem { ProblemBanner(text: problem) }
-            SummaryCard(rows: [
-                .init(label: "Kind", value: file.kind.rawValue.capitalized),
-                .init(label: "Status", value: status),
-                .init(label: "Encryption", value: "AES-256-GCM, \(file.manifest.blocks.count) block\(file.manifest.blocks.count == 1 ? "" : "s")"),
-                .init(label: "Network ID", value: String(file.cid.prefix(18)) + "…", mono: true),
-            ])
-            if file.state == .stored {
-                GlassField(label: "On this iPhone", icon: "iphone") {
-                    Toggle(isOn: Binding(get: { store.kept.contains(file.cid) }, set: { store.setKept(file, $0) })) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Keep on this iPhone")
-                                .font(.system(.subheadline, design: .rounded, weight: .bold))
-                                .foregroundStyle(Brand.text)
-                            Text("Opens instantly, even offline. Otherwise it lives on the Ego network and downloads when you open it.")
-                                .font(.caption)
-                                .foregroundStyle(Brand.muted)
-                        }
+        ZStack {
+            AuroraBackground(intensity: 0.5)
+            VStack(spacing: 0) {
+                header
+                ScrollView {
+                    VStack(spacing: 14) {
+                        preview
+                        actions
+                        if let problem { ProblemBanner(text: problem) }
+                        if file.state == .stored { keepOnPhone }
+                        SummaryCard(rows: [
+                            .init(label: "Kind", value: file.kind.rawValue.capitalized),
+                            .init(label: "Status", value: status),
+                            .init(label: "Encryption", value: "AES-256-GCM, \(file.manifest.blocks.count) block\(file.manifest.blocks.count == 1 ? "" : "s")"),
+                            .init(label: "Network ID", value: String(file.cid.prefix(18)) + "…", mono: true),
+                        ])
+                        NoteCard(text: "An Ego link lets anyone who has it open this file, so send it only to the person it's for.", icon: "link")
                     }
-                    .tint(Brand.mint)
-                    if store.onDevice.contains(file.cid) {
-                        Button {
-                            store.removeDownload(file)
-                            url = nil
-                            Haptics.tap()
-                        } label: {
-                            Label("Remove Download · frees \(bytes(file.size))", systemImage: "icloud.and.arrow.up")
-                        }
-                        .buttonStyle(OutlineButtonStyle())
-                    }
-                }
-            }
-            NoteCard(text: "An Ego link lets anyone who has it open this file, so send it only to the person it's for.", icon: "link")
-        } footer: {
-            if let url {
-                SwiftUI.ShareLink(item: url) { Label("Send", systemImage: "paperplane.fill") }
-                    .buttonStyle(GlowButtonStyle())
-            } else {
-                Button {} label: { Label("Send", systemImage: "paperplane.fill") }
-                    .buttonStyle(GlowButtonStyle()).disabled(true)
-            }
-            HStack(spacing: 10) {
-                FileActionTile(title: copied ? "Copied" : "Copy link", icon: copied ? "checkmark" : "link", tint: Brand.mint) {
-                    UIPasteboard.general.string = store.shareLink(for: file)
-                    withAnimation(.spring(response: 0.3)) { copied = true }
-                    Haptics.tap()
-                }
-                .disabled(file.state != .stored)
-                FileActionTile(title: "Rename", icon: "pencil", tint: Brand.sky) {
-                    newName = file.name
-                    renaming = true
-                }
-                FileActionTile(title: "Delete", icon: "trash", tint: Brand.danger) {
-                    Haptics.warning()
-                    confirmDelete = true
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 24)
                 }
             }
         }
+        .presentationBackground(Brand.ink)
+        .presentationCornerRadius(28)
         .task { await open() }
         .quickLookPreview($previewing)
         .confirmationDialog("Delete \(file.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
@@ -805,6 +774,91 @@ struct FileDetailView: View {
             TextField("Name", text: $newName)
             Button("Save") { store.rename(file, to: newName) }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Name and size on one compact line, with the close button.
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon(file.kind))
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Brand.lime)
+                .frame(width: 34, height: 34)
+                .background(Brand.lime.opacity(0.14), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(file.name)
+                    .font(.system(.headline, design: .rounded, weight: .bold))
+                    .foregroundStyle(Brand.text)
+                    .lineLimit(2)
+                Text("\(bytes(file.size)) · added \(relativeTime(file.addedAt))")
+                    .font(.caption)
+                    .foregroundStyle(Brand.muted)
+            }
+            Spacer(minLength: 8)
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Brand.muted)
+                    .frame(width: 32, height: 32)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel("Close")
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 12)
+    }
+
+    /// Send, copy link, rename and delete in one small row under the preview.
+    private var actions: some View {
+        HStack(spacing: 8) {
+            if let url {
+                SwiftUI.ShareLink(item: url) { FileActionLabel(title: "Send", icon: "paperplane.fill", tint: Brand.lime) }
+                    .buttonStyle(TilePressStyle())
+            } else {
+                FileActionTile(title: "Send", icon: "paperplane.fill", tint: Brand.lime) {}
+                    .disabled(true)
+            }
+            FileActionTile(title: copied ? "Copied" : "Copy link", icon: copied ? "checkmark" : "link", tint: Brand.mint) {
+                UIPasteboard.general.string = store.shareLink(for: file)
+                withAnimation(.spring(response: 0.3)) { copied = true }
+                Haptics.tap()
+            }
+            .disabled(file.state != .stored)
+            FileActionTile(title: "Rename", icon: "pencil", tint: Brand.sky) {
+                newName = file.name
+                renaming = true
+            }
+            FileActionTile(title: "Delete", icon: "trash", tint: Brand.danger) {
+                Haptics.warning()
+                confirmDelete = true
+            }
+        }
+    }
+
+    private var keepOnPhone: some View {
+        GlassField(label: "On this iPhone", icon: "iphone") {
+            Toggle(isOn: Binding(get: { store.kept.contains(file.cid) }, set: { store.setKept(file, $0) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keep on this iPhone")
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        .foregroundStyle(Brand.text)
+                    Text("Opens instantly, even offline. Otherwise it lives on the Ego network and downloads when you open it.")
+                        .font(.caption)
+                        .foregroundStyle(Brand.muted)
+                }
+            }
+            .tint(Brand.mint)
+            if store.onDevice.contains(file.cid) {
+                Button {
+                    store.removeDownload(file)
+                    url = nil
+                    Haptics.tap()
+                } label: {
+                    Label("Remove Download · frees \(bytes(file.size))", systemImage: "icloud.and.arrow.up")
+                }
+                .buttonStyle(OutlineButtonStyle())
+            }
         }
     }
 
@@ -825,14 +879,14 @@ struct FileDetailView: View {
             ZStack {
                 if let data = file.thumbnail, let image = UIImage(data: data) {
                     Image(uiImage: image).resizable().scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: 280)
+                        .frame(maxWidth: .infinity, maxHeight: 220)
                         .clipped()
                 } else {
                     VStack(spacing: 10) {
-                        Image(systemName: icon(file.kind)).font(.system(size: 44)).foregroundStyle(Brand.glow)
+                        Image(systemName: icon(file.kind)).font(.system(size: 36)).foregroundStyle(Brand.glow)
                         Text((file.name as NSString).pathExtension.uppercased()).font(.caption.weight(.bold)).foregroundStyle(Brand.muted)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .frame(maxWidth: .infinity, minHeight: 140)
                     .background(Brand.raised)
                 }
                 if let progress = store.downloads[file.cid] {
@@ -886,33 +940,128 @@ struct FileDetailView: View {
     }
 }
 
-/// A square action under a file: an icon in a tinted well with its name beneath.
+// MARK: - Someone else's link
+
+/// Opens an Ego link someone sent: paste it, and the file is fetched from the network and decrypted with the key inside it.
+struct OpenLinkView: View {
+    @EnvironmentObject private var store: StorageStore
+    @State private var text = ""
+    @State private var url: URL?
+    @State private var problem: String?
+    @State private var opening = false
+    @State private var previewing: URL?
+
+    private var link: EgoShareLink? { try? EgoShareLink(parsing: text) }
+
+    var body: some View {
+        FlowSheet(icon: "link", title: url == nil ? "Open an Ego link" : (link?.name ?? "File"),
+                  subtitle: url == nil ? "Paste a link someone copied from Ego Storage to see their file." : nil) {
+            if let url, let link {
+                Button { previewing = url } label: {
+                    Label("View \(link.name)", systemImage: "eye.fill")
+                }
+                .buttonStyle(OutlineButtonStyle())
+                SummaryCard(rows: [
+                    .init(label: "Kind", value: LibraryFile.Kind.of(name: link.name).rawValue.capitalized),
+                    .init(label: "Size", value: bytes((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)),
+                    .init(label: "From", value: shortAddress(link.from), mono: true),
+                ])
+            } else {
+                GlassField(label: "Ego link", icon: "link", trailing: AnyView(
+                    Button {
+                        text = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? text
+                        Haptics.tap()
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard").font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(Brand.lime)
+                )) {
+                    TextField("egoshare1:…", text: $text, axis: .vertical)
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(Brand.text)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .lineLimit(1...4)
+                    if !text.isEmpty, link == nil {
+                        Label(StorageError.badShareLink.errorDescription ?? "", systemImage: "exclamationmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Brand.danger)
+                    }
+                }
+            }
+            if let problem { ProblemBanner(text: problem) }
+            NoteCard(text: "The file is fetched from Ego Desktop computers and decrypted on this iPhone with the key inside the link.", icon: "lock.fill")
+        } footer: {
+            if let url {
+                SwiftUI.ShareLink(item: url) { Label("Save or send", systemImage: "square.and.arrow.up") }
+                    .buttonStyle(GlowButtonStyle())
+            } else {
+                Button {
+                    Task { await open() }
+                } label: {
+                    if opening {
+                        HStack(spacing: 8) { ProgressView().tint(Brand.ink); Text("Opening…") }
+                    } else {
+                        Label("Open", systemImage: "arrow.down.circle.fill")
+                    }
+                }
+                .buttonStyle(GlowButtonStyle())
+                .disabled(link == nil || opening)
+            }
+        }
+        .quickLookPreview($previewing)
+    }
+
+    private func open() async {
+        guard let link else { return }
+        opening = true
+        problem = nil
+        defer { opening = false }
+        do {
+            url = try await store.openShared(link)
+            previewing = url
+            Haptics.success()
+        } catch {
+            problem = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+/// A small action under a file: an icon with its name beneath.
 struct FileActionTile: View {
     let title: String
     let icon: String
     let tint: Color
     let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { FileActionLabel(title: title, icon: icon, tint: tint) }
+            .buttonStyle(TilePressStyle())
+    }
+}
+
+struct FileActionLabel: View {
+    let title: String
+    let icon: String
+    let tint: Color
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(tint)
-                    .frame(width: 40, height: 40)
-                    .background(tint.opacity(0.14), in: Circle())
-                Text(title)
-                    .font(.system(.footnote, design: .rounded, weight: .bold))
-                    .foregroundStyle(tint == Brand.danger ? Brand.danger : Brand.text)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(tint.opacity(0.25)))
-            .opacity(enabled ? 1 : 0.4)
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(height: 20)
+            Text(title)
+                .font(.system(.caption2, design: .rounded, weight: .semibold))
+                .foregroundStyle(tint == Brand.danger ? Brand.danger : Brand.text)
+                .lineLimit(1)
         }
-        .buttonStyle(TilePressStyle())
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(tint.opacity(0.2)))
+        .opacity(enabled ? 1 : 0.4)
     }
 }
 
