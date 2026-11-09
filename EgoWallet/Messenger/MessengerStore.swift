@@ -684,16 +684,23 @@ final class MessengerStore: ObservableObject {
         guard !clean.isEmpty, !thinking else { return }
         if let key = app.key { load(for: key.address) }
         let history = ai.suffix(10).map { Messenger.AITurn(role: $0.fromMe ? "user" : "assistant", content: $0.text) }
+        let lastQuestion = ai.last(where: { $0.fromMe })?.text
         let now = Int64(Date().timeIntervalSince1970)
         ai.append(AIMessage(id: UUID().uuidString, fromMe: true, text: clean, ts: now))
         thinking = true
         defer { thinking = false }
-        do {
-            let answer = try await app.perform { try await $0.askEgoAI(clean, history: history) }
-            ai.append(AIMessage(id: UUID().uuidString, fromMe: false, text: answer, ts: Int64(Date().timeIntervalSince1970)))
+        if let local = EgoAI.answer(clean, after: lastQuestion) {
+            try? await Task.sleep(for: .milliseconds(400))
+            ai.append(AIMessage(id: UUID().uuidString, fromMe: false, text: local, ts: Int64(Date().timeIntervalSince1970)))
             problem = nil
-        } catch {
-            problem = app.message(for: error)
+        } else {
+            do {
+                let answer = try await app.perform { try await $0.askEgoAI(clean, history: history) }
+                ai.append(AIMessage(id: UUID().uuidString, fromMe: false, text: answer, ts: Int64(Date().timeIntervalSince1970)))
+                problem = nil
+            } catch {
+                problem = app.message(for: error)
+            }
         }
         if ai.count > Self.maxAI { ai.removeFirst(ai.count - Self.maxAI) }
         save()

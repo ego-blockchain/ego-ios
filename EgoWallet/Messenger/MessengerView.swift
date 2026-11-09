@@ -624,13 +624,27 @@ struct EgoAIView: View {
     @FocusState private var composing: Bool
 
     private let bottomID = "ai-bottom"
-    private let starters = [
-        "How do I earn EGOC with my computer?",
-        "How does storage on Ego work?",
-        "What is staking and how much does it pay?",
-        "How do I send EGOC to someone?",
-        "Is Ego quantum-safe?",
-    ]
+
+    private var followUps: [String] {
+        guard !store.thinking, let last = store.ai.last, !last.fromMe else { return [] }
+        let asked = store.ai.filter(\.fromMe).map(\.text)
+        return EgoAI.followUps(after: asked.last ?? "", asked: asked)
+    }
+
+    private func chip(_ question: String) -> some View {
+        Button { Task { await store.ask(question, app: app) } } label: {
+            Text(question)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Brand.text)
+                .multilineTextAlignment(.leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial.opacity(0.5), in: Capsule())
+                .overlay(Capsule().stroke(Brand.amber.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .disabled(store.thinking)
+    }
 
     var body: some View {
         ZStack {
@@ -649,18 +663,24 @@ struct EgoAIView: View {
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.top, 30)
-                            ForEach(starters, id: \.self) { q in
-                                Button { Task { await store.ask(q, app: app) } } label: {
-                                    Text(q)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(Brand.text)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(12)
-                                        .background(.ultraThinMaterial.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Brand.amber.opacity(0.35)))
+                            ForEach(EgoAI.starters, id: \.self) { group in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    SectionLabel(text: group.heading)
+                                    ForEach(group.questions, id: \.self) { q in
+                                        Button { Task { await store.ask(q, app: app) } } label: {
+                                            Text(q)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(Brand.text)
+                                                .multilineTextAlignment(.leading)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(12)
+                                                .background(.ultraThinMaterial.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Brand.amber.opacity(0.35)))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .disabled(store.thinking)
+                                    }
                                 }
-                                .buttonStyle(.plain)
-                                .disabled(store.thinking)
                             }
                         }
                         ForEach(store.ai) { message in
@@ -682,6 +702,13 @@ struct EgoAIView: View {
                                 EgoAIBadge(size: 28)
                                 ProgressView().tint(Brand.amber)
                             }
+                        }
+                        if !followUps.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                SectionLabel(text: "Ask next")
+                                ForEach(followUps, id: \.self) { chip($0) }
+                            }
+                            .padding(.leading, 36)
                         }
                         Color.clear.frame(height: 1).id(bottomID)
                     }
