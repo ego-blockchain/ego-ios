@@ -1,3 +1,4 @@
+import AVFoundation
 import EgoKit
 import PhotosUI
 import SwiftUI
@@ -82,11 +83,33 @@ struct AddContactSheet: View {
         DataScannerViewController.isSupported && DataScannerViewController.isAvailable
     }
 
+    /// Asks for the camera the first time; the scanner reports itself unavailable until access is granted.
+    private func startScanning() async {
+        problem = nil
+        guard DataScannerViewController.isSupported else {
+            problem = "This iPhone can't scan codes. Paste the card instead."
+            return
+        }
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .notDetermined:
+            guard await AVCaptureDevice.requestAccess(for: .video) else {
+                problem = "Ego Wallet needs the camera to scan a card. You can allow it in Settings, or paste the card instead."
+                return
+            }
+        case .denied, .restricted:
+            problem = "Camera access is off for Ego Wallet. Turn it on in Settings › Ego Wallet › Camera, or paste the card instead."
+            return
+        default:
+            break
+        }
+        if scannerReady { scanning = true } else { problem = "The camera isn't available right now. Paste the card instead." }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Paste or scan the other person's contact card. They see your request in their Messenger and approve it.")
+                    Text("Paste or scan the other person's contact card. They see your request and approve it.")
                         .font(.subheadline)
                         .foregroundStyle(Brand.muted)
                     TextField("egocontact1:…", text: $card, axis: .vertical)
@@ -102,7 +125,7 @@ struct AddContactSheet: View {
                         } label: { Label("Paste", systemImage: "doc.on.clipboard") }
                             .buttonStyle(OutlineButtonStyle())
                         Button {
-                            if scannerReady { scanning = true } else { problem = "This iPhone can't scan codes here. Paste the card instead." }
+                            Task { await startScanning() }
                         } label: { Label("Scan QR", systemImage: "qrcode.viewfinder") }
                             .buttonStyle(OutlineButtonStyle())
                     }
@@ -200,14 +223,13 @@ struct MyCardSheet: View {
                             Text("Your contacts see it.").font(.caption).foregroundStyle(Brand.muted)
                         }
                     }
-                    if !store.cardFromDesktop {
-                        VStack(alignment: .leading, spacing: 6) {
-                            SectionLabel(text: "Your name")
-                            TextField("Name", text: $name)
-                                .padding(12)
-                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .onSubmit { store.setName(name) }
-                        }
+                    VStack(alignment: .leading, spacing: 6) {
+                        SectionLabel(text: "Your name")
+                        TextField("Name", text: $name)
+                            .padding(12)
+                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .onSubmit { store.setName(name, app: app) }
+                        Text("Your contacts and your Ego Desktop get it too.").font(.caption).foregroundStyle(Brand.muted)
                     }
                     let card = store.myCard(app)
                     GlassCard {
@@ -260,7 +282,7 @@ struct MyCardSheet: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
-                        if !store.cardFromDesktop { store.setName(name) }
+                        store.setName(name, app: app)
                         dismiss()
                     }
                 }

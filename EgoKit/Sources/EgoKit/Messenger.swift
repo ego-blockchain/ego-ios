@@ -127,9 +127,11 @@ public enum Messenger {
         public let messageIds: [String]?
         public let messages: [HistoryMessage]?
         public let profiles: [HistoryProfile]?
+        /// A profile update's own display name; absent from older versions.
+        public let name: String?
 
         enum CodingKeys: String, CodingKey {
-            case type, bundle, seq, approved, avatar, from, to, messages, profiles
+            case type, bundle, seq, approved, avatar, from, to, messages, profiles, name
             case fromAddr = "from_addr"
             case fromName = "from_name"
             case fromEd25519 = "from_ed25519"
@@ -156,8 +158,11 @@ public enum Messenger {
             ["type": read ? "read_receipt" : "delivery_receipt", "from": from, "to": to, "message_ids": ids]
         }
 
-        public static func profile(from: String, avatar: String) -> [String: Any] {
-            ["type": "profile_update", "from_addr": from, "avatar": avatar]
+        /// The picture always goes along: older versions replace it with whatever arrives.
+        public static func profile(from: String, avatar: String, name: String = "") -> [String: Any] {
+            var fields: [String: Any] = ["type": "profile_update", "from_addr": from, "avatar": avatar]
+            if !name.isEmpty { fields["name"] = name }
+            return fields
         }
 
         public static func data(_ fields: [String: Any]) throws -> Data {
@@ -318,6 +323,8 @@ public enum Messenger {
         case reply(text: String, to: String)
         case reaction(target: String, code: String, remove: Bool)
         case edit(target: String, text: String)
+        /// The sender deletes one of their own messages for everyone.
+        case delete(target: String)
         case file(String)
         case other(type: String, content: String)
     }
@@ -325,6 +332,7 @@ public enum Messenger {
     struct ReplyBody: Codable { let reply_to: String; let text: String }
     struct ReactBody: Codable { let target: String; let emoji: String; var remove: Bool? }
     struct EditBody: Codable { let target: String; let text: String }
+    struct DeleteBody: Codable { let target: String }
 
     public static func body(type: String, content: String) -> Body {
         let data = Data(content.utf8)
@@ -337,6 +345,8 @@ public enum Messenger {
             if let b = try? JSONDecoder().decode(ReactBody.self, from: data) { return .reaction(target: b.target, code: b.emoji, remove: b.remove ?? false) }
         case "edit":
             if let b = try? JSONDecoder().decode(EditBody.self, from: data) { return .edit(target: b.target, text: b.text) }
+        case "delete":
+            if let b = try? JSONDecoder().decode(DeleteBody.self, from: data) { return .delete(target: b.target) }
         case "file_bundle": return .file(content)
         default: break
         }
@@ -354,6 +364,7 @@ public enum Messenger {
         case .reply(let t, let to): return ("reply", json(ReplyBody(reply_to: to, text: t)))
         case .reaction(let target, let code, let remove): return ("reaction", json(ReactBody(target: target, emoji: code, remove: remove)))
         case .edit(let target, let text): return ("edit", json(EditBody(target: target, text: text)))
+        case .delete(let target): return ("delete", json(DeleteBody(target: target)))
         case .file(let link): return ("file_bundle", link)
         case .other(let type, let content): return (type, content)
         }

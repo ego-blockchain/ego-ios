@@ -47,6 +47,12 @@ struct PhoneContact: Codable, Identifiable, Equatable {
     }
 }
 
+/// A name or picture with when it was set, so the newest one shows.
+struct Stamped: Codable, Equatable {
+    var value: String
+    var at: Int64
+}
+
 struct AIMessage: Codable, Identifiable, Equatable {
     let id: String
     let fromMe: Bool
@@ -67,6 +73,14 @@ private struct SavedMessenger: Codable {
     var myToken = ""
     var myName = ""
     var historyAskedAt: Int64 = 0
+    var blocks: [AccountRecord.Block] = []
+    var deleted: [String] = []
+    var clearedAt: [String: Int64] = [:]
+    var myRenames: [String: Stamped] = [:]
+    var theirNames: [String: Stamped] = [:]
+    var customAvatars: [String: Stamped] = [:]
+    var avatarsAt: [String: Int64] = [:]
+    var myNameAt: Int64 = 0
 
     init(owner: String) { self.owner = owner }
 
@@ -84,6 +98,14 @@ private struct SavedMessenger: Codable {
         myToken = try c.decodeIfPresent(String.self, forKey: .myToken) ?? ""
         myName = try c.decodeIfPresent(String.self, forKey: .myName) ?? ""
         historyAskedAt = try c.decodeIfPresent(Int64.self, forKey: .historyAskedAt) ?? 0
+        blocks = try c.decodeIfPresent([AccountRecord.Block].self, forKey: .blocks) ?? []
+        deleted = try c.decodeIfPresent([String].self, forKey: .deleted) ?? []
+        clearedAt = try c.decodeIfPresent([String: Int64].self, forKey: .clearedAt) ?? [:]
+        myRenames = try c.decodeIfPresent([String: Stamped].self, forKey: .myRenames) ?? [:]
+        theirNames = try c.decodeIfPresent([String: Stamped].self, forKey: .theirNames) ?? [:]
+        customAvatars = try c.decodeIfPresent([String: Stamped].self, forKey: .customAvatars) ?? [:]
+        avatarsAt = try c.decodeIfPresent([String: Int64].self, forKey: .avatarsAt) ?? [:]
+        myNameAt = try c.decodeIfPresent(Int64.self, forKey: .myNameAt) ?? 0
     }
 }
 
@@ -102,12 +124,21 @@ final class MessengerStore: ObservableObject {
     @Published private(set) var sending = false
     @Published private(set) var refreshing = false
     @Published private(set) var historyAskedAt: Int64 = 0
+    @Published private(set) var blocks: [AccountRecord.Block] = []
+    @Published private(set) var myRenames: [String: Stamped] = [:]
+    @Published private(set) var theirNames: [String: Stamped] = [:]
+    @Published private(set) var customAvatars: [String: Stamped] = [:]
     @Published var problem: String?
     @Published var notice: String?
 
     private var cursors: [String: Int64] = [:]
     private var seen: [String] = []
     private var seenSet: Set<String> = []
+    private var deleted: [String] = []
+    private var deletedSet: Set<String> = []
+    private var clearedAt: [String: Int64] = [:]
+    private var avatarsAt: [String: Int64] = [:]
+    private var myNameAt: Int64 = 0
     private var myToken = ""
     private var owner = ""
     private let url: URL
@@ -149,6 +180,15 @@ final class MessengerStore: ObservableObject {
         myToken = saved.myToken
         myName = saved.myName
         historyAskedAt = saved.historyAskedAt
+        blocks = saved.blocks
+        deleted = saved.deleted
+        deletedSet = Set(saved.deleted)
+        clearedAt = saved.clearedAt
+        myRenames = saved.myRenames
+        theirNames = saved.theirNames
+        customAvatars = saved.customAvatars
+        avatarsAt = saved.avatarsAt
+        myNameAt = saved.myNameAt
     }
 
     func forget() {
@@ -166,6 +206,15 @@ final class MessengerStore: ObservableObject {
         myToken = ""
         myName = ""
         historyAskedAt = 0
+        blocks = []
+        deleted = []
+        deletedSet = []
+        clearedAt = [:]
+        myRenames = [:]
+        theirNames = [:]
+        customAvatars = [:]
+        avatarsAt = [:]
+        myNameAt = 0
     }
 
     private func save() {
@@ -182,6 +231,14 @@ final class MessengerStore: ObservableObject {
         saved.myToken = myToken
         saved.myName = myName
         saved.historyAskedAt = historyAskedAt
+        saved.blocks = blocks
+        saved.deleted = deleted
+        saved.clearedAt = clearedAt
+        saved.myRenames = myRenames
+        saved.theirNames = theirNames
+        saved.customAvatars = customAvatars
+        saved.avatarsAt = avatarsAt
+        saved.myNameAt = myNameAt
         guard let data = try? JSONEncoder().encode(saved) else { return }
         try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
@@ -195,7 +252,7 @@ final class MessengerStore: ObservableObject {
 
     var requests: [PhoneContact] {
         let known = Set(AccountStore.shared.contacts.map(\.address))
-        return phoneContacts.filter { $0.status == "pending_in" && !known.contains($0.address) }
+        return phoneContacts.filter { $0.status == "pending_in" && !known.contains($0.address) && !isBlocked($0.address) }
     }
 
     var waiting: [PhoneContact] {
@@ -206,12 +263,111 @@ final class MessengerStore: ObservableObject {
         contacts.first { $0.address == address }
     }
 
+    /// Their own picture, unless you set one for them after they last changed theirs.
     func avatar(for address: String) -> String {
-        address == owner && !myAvatar.isEmpty ? myAvatar : (avatars[address] ?? "")
+        if address == owner { return myAvatar }
+        if let mine = customAvatars[address], mine.at > (avatarsAt[address] ?? 0) { return mine.value }
+        return avatars[address] ?? ""
     }
 
+    /// The newest of: the name on Ego Desktop, the one you gave them here, and the one they chose themselves.
+    func name(for address: String) -> String {
+        var best = Stamped(value: "", at: -1)
+        if let c = AccountStore.shared.contacts.first(where: { $0.address == address }) {
+            best = Stamped(value: c.name, at: c.nameAt)
+        } else if let p = phoneContacts.first(where: { $0.address == address }) {
+            best = Stamped(value: p.name, at: 0)
+        }
+        for candidate in [theirNames[address], myRenames[address]].compactMap({ $0 }) where candidate.at > best.at && !candidate.value.isEmpty {
+            best = candidate
+        }
+        return best.value.isEmpty ? shortAddress(address) : best.value
+    }
+
+    /// Your name: the newer of the one set here and the one on Ego Desktop.
     var displayedName: String {
-        myName.isEmpty ? AccountStore.shared.desktopName : myName
+        let desk = AccountStore.shared.desktopName
+        if myName.isEmpty || desk.isEmpty { return myName.isEmpty ? desk : myName }
+        return myNameAt >= (AccountStore.shared.desktop?.nameAt ?? 0) ? myName : desk
+    }
+
+    // MARK: - Blocking, deleting, renaming
+
+    func isBlocked(_ address: String) -> Bool {
+        blocks.contains { $0.address == address && $0.blocked }
+    }
+
+    var blockedAddresses: [String] {
+        blocks.filter(\.blocked).map(\.address)
+    }
+
+    func setBlocked(_ address: String, _ blocked: Bool, app: AppModel) async {
+        let now = Int64(Date().timeIntervalSince1970)
+        blocks.removeAll { $0.address == address }
+        blocks.insert(AccountRecord.Block(address: address, blocked: blocked, at: now), at: 0)
+        if blocks.count > 1_000 { blocks.removeLast(blocks.count - 1_000) }
+        save()
+        Haptics.tap()
+        let list = blocks
+        await AccountStore.shared.updatePhone(app) { $0.blocks = list }
+    }
+
+    private func forgetForever(_ id: String) {
+        deleted.append(id)
+        deletedSet.insert(id)
+        if deleted.count > Self.maxSeen {
+            let drop = deleted.prefix(deleted.count - Self.maxSeen)
+            drop.forEach { deletedSet.remove($0) }
+            deleted.removeFirst(drop.count)
+        }
+    }
+
+    /// Removes a message from this iPhone; it won't come back with older history either.
+    func deleteForMe(_ message: ThreadMessage, with peer: String) {
+        threads[peer]?.removeAll { $0.id == message.id }
+        forgetForever(message.id)
+        save()
+    }
+
+    /// Removes one of your own messages here and on the other person's phone and Ego Desktop.
+    func deleteForEveryone(_ message: ThreadMessage, with contact: AccountRecord.Contact, app: AppModel) async {
+        guard message.from == app.address else { return }
+        if await send(.delete(target: message.id), to: contact, app: app) {
+            deleteForMe(message, with: contact.address)
+        }
+    }
+
+    /// Empties a conversation on this iPhone. Nothing older than now comes back.
+    func clear(_ peer: String) {
+        threads[peer] = []
+        clearedAt[peer] = Int64(Date().timeIntervalSince1970)
+        save()
+    }
+
+    /// Your own name for a contact. Synced to Ego Desktop; their next change of name replaces it.
+    func rename(_ address: String, to name: String, app: AppModel) async {
+        let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+        guard !clean.isEmpty else { return }
+        myRenames[address] = Stamped(value: clean, at: Int64(Date().timeIntervalSince1970))
+        save()
+        let renames = myRenames.map { AccountRecord.Rename(address: $0.key, name: $0.value.value, at: $0.value.at) }
+            .sorted { $0.at > $1.at }.prefix(500)
+        await AccountStore.shared.updatePhone(app) { $0.renames = Array(renames) }
+    }
+
+    /// Your own picture for a contact, on this iPhone. Their next new picture replaces it.
+    func setPicture(_ image: UIImage, for address: String) {
+        guard let dataURL = Self.avatarURL(image) else {
+            problem = "That picture couldn't be used."
+            return
+        }
+        customAvatars[address] = Stamped(value: dataURL, at: Int64(Date().timeIntervalSince1970))
+        save()
+    }
+
+    func resetPicture(for address: String) {
+        customAvatars[address] = nil
+        save()
     }
 
     private var tokens: Set<String> {
@@ -302,6 +458,9 @@ final class MessengerStore: ObservableObject {
             phoneContacts = savedContacts.map { PhoneContact(address: $0.address, name: $0.name, ed25519: $0.ed25519, sharedKeyHex: $0.sharedKeyHex, status: "approved", token: "", addedAt: 0, lastRequestAt: 0) }
         }
         if myAvatar.isEmpty, !account.phoneContent.avatar.isEmpty { myAvatar = account.phoneContent.avatar }
+        if let desk = account.desktop?.blocks, AccountRecord.merge(blocks: desk, into: &blocks, now: Int64(Date().timeIntervalSince1970)) {
+            save()
+        }
         mergeSent(account.allSent, me: me)
         await askForHistoryOnce(app)
 
@@ -342,15 +501,24 @@ final class MessengerStore: ObservableObject {
         for inner in inners {
             switch inner.type {
             case "chat_message":
-                if let text = inner.bundle, let bundle = Messenger.Bundle(parsing: text), bundle.from == me || bundle.to == me {
+                if let text = inner.bundle, let bundle = Messenger.Bundle(parsing: text), bundle.from == me || bundle.to == me, !isBlocked(bundle.from) {
                     chats.append((bundle, inner.seq ?? 0))
                 }
-            case "contact_request":
+            case "contact_request" where !isBlocked(inner.fromAddr ?? ""):
                 contactsChanged = await handleRequest(inner, me: me, app: app) || contactsChanged
             case "contact_response":
                 contactsChanged = handleResponse(inner) || contactsChanged
             case "profile_update":
-                if let from = inner.fromAddr, let avatar = inner.avatar, Self.validAvatar(avatar) { avatars[from] = avatar }
+                guard let from = inner.fromAddr, !isBlocked(from) else { break }
+                let at = Int64(Date().timeIntervalSince1970)
+                if let avatar = inner.avatar, Self.validAvatar(avatar), avatars[from] != avatar {
+                    avatars[from] = avatar
+                    avatarsAt[from] = at
+                }
+                // Their own name replaces whatever you called them.
+                if let name = inner.name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty, theirNames[from]?.value != name {
+                    theirNames[from] = Stamped(value: String(name.prefix(32)), at: at)
+                }
             case "delivery_receipt", "read_receipt":
                 if inner.to == me, let from = inner.from, let ids = inner.messageIds { mark(ids, in: from, read: inner.type == "read_receipt") }
             case "history":
@@ -482,6 +650,7 @@ final class MessengerStore: ObservableObject {
 
     @discardableResult
     private func insert(_ message: ThreadMessage, peer: String) -> Bool {
+        guard !deletedSet.contains(message.id), message.ts > (clearedAt[peer] ?? 0) else { return false }
         var list = threads[peer] ?? []
         guard !list.contains(where: { $0.id == message.id }) else { return false }
         let at = list.lastIndex { $0.ts <= message.ts }.map { $0 + 1 } ?? 0
@@ -509,6 +678,15 @@ final class MessengerStore: ObservableObject {
             list[i].text = text
             list[i].editedAt = bundle.ts
             threads[peer] = list
+            return false
+        case .delete(let target):
+            guard var list = threads[peer], let i = list.firstIndex(where: { $0.id == target }), list[i].from == bundle.from else {
+                forgetForever(target)
+                return false
+            }
+            list.remove(at: i)
+            threads[peer] = list
+            forgetForever(target)
             return false
         case .text(let text):
             return insert(message("text", text), peer: peer)
@@ -639,9 +817,23 @@ final class MessengerStore: ObservableObject {
                         to: request.address, ed25519: request.ed25519, app: app)
     }
 
-    func setName(_ name: String) {
-        myName = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+    func setName(_ name: String, app: AppModel) {
+        let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
+        guard !clean.isEmpty, clean != displayedName else { return }
+        let now = Int64(Date().timeIntervalSince1970)
+        myName = clean
+        myNameAt = now
         save()
+        Task {
+            await AccountStore.shared.updatePhone(app) { content in
+                content.name = clean
+                content.nameAt = now
+            }
+            guard let key = app.key else { return }
+            for contact in contacts {
+                try? await post(Messenger.Outgoing.profile(from: key.address, avatar: myAvatar, name: clean), to: contact.address, ed25519: contact.ed25519, app: app)
+            }
+        }
     }
 
     func setAvatar(_ image: UIImage, app: AppModel) async {
@@ -657,7 +849,7 @@ final class MessengerStore: ObservableObject {
             content.avatarAt = now
         }
         for contact in contacts {
-            try? await post(Messenger.Outgoing.profile(from: key.address, avatar: dataURL), to: contact.address, ed25519: contact.ed25519, app: app)
+            try? await post(Messenger.Outgoing.profile(from: key.address, avatar: dataURL, name: displayedName), to: contact.address, ed25519: contact.ed25519, app: app)
         }
     }
 

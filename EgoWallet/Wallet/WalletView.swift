@@ -49,7 +49,13 @@ struct WalletView: View {
             .sheet(isPresented: $sending) { SendView() }
             .sheet(isPresented: $receiving) { ReceiveView(address: model.address) }
             .sheet(isPresented: $settingUpAuth) { AuthenticatorSetupSheet(address: model.address) }
-            .task { await model.refresh() }
+            .task {
+                // Wait for the slide into Wallet to finish: a refresh starting mid-swipe redraws the page while it moves.
+                try? await Task.sleep(for: .milliseconds(450))
+                guard !Task.isCancelled else { return }
+                if let last = model.lastUpdated, Date().timeIntervalSince(last) < 20 { return }
+                await model.refresh()
+            }
             .task { remindAuth = AuthReminder.due(enabled: auth.enabled) }
             .alert("Protect your wallet", isPresented: $remindAuth) {
                 Button("Set up") {

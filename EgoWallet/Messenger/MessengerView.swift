@@ -28,7 +28,7 @@ struct MessengerView: View {
             AuroraBackground(intensity: 0.5, colors: Brand.chatAurora)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    PageTitle(title: "Messenger", subtitle: "End-to-end encrypted") {
+                    PageTitle(title: "Chat", subtitle: "End-to-end encrypted") {
                         HStack(spacing: 10) {
                             headerButton("person.badge.plus", label: "Add a contact") { showAdd = true }
                             Button { showCard = true } label: {
@@ -166,7 +166,7 @@ struct MessengerView: View {
         let last = store.last(with: contact.address)
         let unread = store.unread(with: contact.address)
         return HStack(spacing: 12) {
-            AvatarImage(dataURL: store.avatar(for: contact.address), name: contact.name, address: contact.address, size: 46)
+            AvatarImage(dataURL: store.avatar(for: contact.address), name: displayName(contact), address: contact.address, size: 46)
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text(displayName(contact))
@@ -179,7 +179,7 @@ struct MessengerView: View {
                     }
                 }
                 HStack {
-                    Text(last.map { ($0.mine(app.address) ? "You: " : "") + $0.preview } ?? shortAddress(contact.address))
+                    Text(store.isBlocked(contact.address) ? "Blocked" : last.map { ($0.mine(app.address) ? "You: " : "") + $0.preview } ?? shortAddress(contact.address))
                         .font(.subheadline)
                         .foregroundStyle(unread > 0 ? Brand.text : Brand.muted)
                         .lineLimit(1)
@@ -201,8 +201,9 @@ struct MessengerView: View {
     }
 }
 
+@MainActor
 func displayName(_ contact: AccountRecord.Contact) -> String {
-    contact.name.isEmpty ? shortAddress(contact.address) : contact.name
+    MessengerStore.shared.name(for: contact.address)
 }
 
 struct EgoAIBadge: View {
@@ -244,8 +245,16 @@ struct ConversationView: View {
     @State private var attachment: ChatAttachment?
     @State private var uploading = false
     @State private var viewing: URL?
+    @State private var renaming = false
+    @State private var newName = ""
+    @State private var pickingPicture = false
+    @State private var pictureItems: [PhotosPickerItem] = []
+    @State private var confirmClear = false
+    @State private var confirmBlock = false
+    @State private var deletingForAll: ThreadMessage?
 
     private let bottomID = "conversation-bottom"
+    private var blocked: Bool { store.isBlocked(address) }
 
     private var contact: AccountRecord.Contact? {
         store.contact(address)
@@ -253,7 +262,14 @@ struct ConversationView: View {
 
     private var messages: [ThreadMessage] { store.messages(with: address) }
 
+    /// The other person's picture, decoded once for the whole list rather than per message.
+    private var peerImage: UIImage? { MessengerStore.image(fromDataURL: store.avatar(for: address)) }
+
     var body: some View {
+        contactDialogs(conversation)
+    }
+
+    private var conversation: some View {
         ZStack {
             AuroraBackground(intensity: 0.45, colors: Brand.chatAurora)
             ScrollViewReader { proxy in
@@ -265,6 +281,8 @@ struct ConversationView: View {
                                 .foregroundStyle(Brand.muted)
                                 .padding(.top, 40)
                         }
+                        let peerPicture = peerImage
+                        let peerName = contact.map(displayName) ?? ""
                         ForEach(Array(messages.enumerated()), id: \.element.id) { i, message in
                             let previous = i > 0 ? messages[i - 1] : nil
                             let following = i + 1 < messages.count ? messages[i + 1] : nil
@@ -279,9 +297,15 @@ struct ConversationView: View {
                                           me: app.address,
                                           status: message.mine(app.address) ? (message.read ? "Read" : message.delivered ? "Delivered" : "Sent") : nil,
                                           onReact: { code in react(code, message) },
-                                          onOpen: { viewing = $0 })
-                                .id(message.id)
+                                          onOpen: { viewing = $0 },
+                                          peer: .init(image: peerPicture, name: peerName, address: address))
                                 .contextMenu { menu(for: message) }
+                                .swipeToReply(leftward: message.mine(app.address), enabled: contact != nil && !blocked) {
+                                    replying = message
+                                    editing = nil
+                                    composing = true
+                                }
+                                .id(message.id)
                         }
                         Color.clear.frame(height: 1).id(bottomID)
                     }
@@ -290,9 +314,23 @@ struct ConversationView: View {
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
+                // A tap on the messages puts the keyboard away; buttons in them still work on the same tap.
+                .simultaneousGesture(TapGesture().onEnded { composing = false })
                 .onChange(of: messages.last?.id) { _, _ in
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(bottomID, anchor: .bottom) }
                     store.markRead(address, app: app)
+                }
+                // Opening the keyboard or starting a reply goes to the newest message, once the keyboard has made room.
+                .onChange(of: composing) { _, now in
+                    guard now else { return }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(bottomID, anchor: .bottom) }
+                    }
+                }
+                .onChange(of: replying?.id) { _, id in
+                    guard id != nil else { return }
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(bottomID, anchor: .bottom) }
                 }
             }
         }
@@ -301,7 +339,26 @@ struct ConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                AvatarImage(dataURL: store.avatar(for: address), name: contact?.name ?? "", address: address, size: 32)
+                Menu {
+                    Button {
+                        newName = store.name(for: address)
+                        renaming = true
+                    } label: { Label("Edit name", systemImage: "pencil") }
+                    Button { pickingPicture = true } label: { Label("Change picture", systemImage: "photo") }
+                    if store.customAvatars[address] != nil {
+                        Button { store.resetPicture(for: address) } label: { Label("Use their own picture", systemImage: "arrow.uturn.backward") }
+                    }
+                    Divider()
+                    Button(role: .destructive) { confirmClear = true } label: { Label("Clear conversation", systemImage: "trash") }
+                    if blocked {
+                        Button { Task { await store.setBlocked(address, false, app: app) } } label: { Label("Unblock", systemImage: "hand.raised.slash") }
+                    } else {
+                        Button(role: .destructive) { confirmBlock = true } label: { Label("Block", systemImage: "hand.raised.fill") }
+                    }
+                } label: {
+                    AvatarImage(dataURL: store.avatar(for: address), name: store.name(for: address), address: address, size: 32)
+                }
+                .accessibilityLabel("Contact options")
             }
         }
         .photosPicker(isPresented: $picking, selection: $picked, maxSelectionCount: 1, matching: .any(of: [.images, .videos]))
@@ -364,9 +421,37 @@ struct ConversationView: View {
                 composing = true
             } label: { Label("Edit", systemImage: "pencil") }
         }
+        Divider()
+        Button(role: .destructive) {
+            store.deleteForMe(message, with: address)
+        } label: { Label("Delete for me", systemImage: "trash") }
+        if message.mine(app.address), contact != nil {
+            Button(role: .destructive) {
+                deletingForAll = message
+            } label: { Label("Delete for everyone", systemImage: "trash.slash") }
+        }
     }
 
-    private var composer: some View {
+    @ViewBuilder private var composer: some View {
+        if blocked {
+            VStack(spacing: 8) {
+                Text("You blocked \(store.name(for: address)). You won't get their messages.")
+                    .font(.footnote)
+                    .foregroundStyle(Brand.muted)
+                    .multilineTextAlignment(.center)
+                Button("Unblock") { Task { await store.setBlocked(address, false, app: app) } }
+                    .buttonStyle(OutlineButtonStyle())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .composerBar()
+        } else {
+            messageComposer
+        }
+    }
+
+    private var messageComposer: some View {
         VStack(spacing: 6) {
             if let problem = store.problem {
                 ProblemBanner(text: problem)
@@ -436,8 +521,9 @@ struct ConversationView: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.top, 6)
+        .padding(.top, 8)
         .padding(.bottom, 8)
+        .composerBar()
     }
 
     private func chip(icon: String, title: String, detail: String, onClose: @escaping () -> Void) -> some View {
@@ -518,10 +604,18 @@ struct MessageBubble: View {
     var status: String?
     var onReact: (String) -> Void = { _ in }
     var onOpen: (URL) -> Void = { _ in }
+    var peer: Peer?
+
+    struct Peer {
+        let image: UIImage?
+        let name: String
+        let address: String
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if mine { Spacer(minLength: 48) }
+            if !mine, let peer { picture(peer).padding(.bottom, last || message.editedAt != nil ? 18 : 0) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 if let quoted {
                     Text(quoted.preview)
@@ -552,6 +646,20 @@ struct MessageBubble: View {
             if !mine { Spacer(minLength: 48) }
         }
         .padding(.top, first ? 8 : 0)
+    }
+
+    @ViewBuilder private func picture(_ peer: Peer) -> some View {
+        if let image = peer.image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 28, height: 28)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.2)))
+                .accessibilityHidden(true)
+        } else {
+            ProfilePicture(link: "", fallback: peer.name, address: peer.address, size: 28)
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -717,8 +825,17 @@ struct EgoAIView: View {
                 }
                 .defaultScrollAnchor(.bottom)
                 .scrollDismissesKeyboard(.interactively)
+                // A tap on the messages puts the keyboard away; buttons in them still work on the same tap.
+                .simultaneousGesture(TapGesture().onEnded { composing = false })
                 .onChange(of: store.ai.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(bottomID, anchor: .bottom) }
+                }
+                .onChange(of: composing) { _, now in
+                    guard now else { return }
+                    Task {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(bottomID, anchor: .bottom) }
+                    }
                 }
             }
         }
@@ -770,7 +887,124 @@ struct EgoAIView: View {
             .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(Brand.amber.opacity(0.5)))
         }
         .padding(.horizontal, 12)
-        .padding(.top, 6)
+        .padding(.top, 8)
         .padding(.bottom, 8)
+        .composerBar()
+    }
+}
+
+extension View {
+    /// A solid bar under a message box, down to the bottom edge of the screen, so messages never show through it.
+    func composerBar() -> some View {
+        background {
+            Brand.ink
+                .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1) }
+                .ignoresSafeArea(edges: .bottom)
+        }
+    }
+}
+
+/// Drag a message to reply to it: theirs to the right, yours to the left. The bubble follows the finger,
+/// an arrow shows behind it, and letting go past the mark starts the reply. Mostly-vertical drags are left to the scroll.
+private struct SwipeToReply: ViewModifier {
+    let leftward: Bool
+    let enabled: Bool
+    let onReply: () -> Void
+    @State private var pull: CGFloat = 0
+    @State private var armed = false
+    @State private var horizontal: Bool?
+
+    private let trigger: CGFloat = 60
+    private let maxPull: CGFloat = 90
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: leftward ? -pull : pull)
+            .background(alignment: leftward ? .trailing : .leading) {
+                Image(systemName: "arrowshape.turn.up.left.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(armed ? Brand.ink : Brand.muted)
+                    .frame(width: 30, height: 30)
+                    .background(armed ? AnyShapeStyle(Brand.chatGlow) : AnyShapeStyle(Brand.raised), in: Circle())
+                    .scaleEffect(armed ? 1 : 0.4 + 0.6 * min(1, pull / trigger))
+                    .opacity(min(1, pull / (trigger * 0.6)))
+                    .padding(leftward ? .trailing : .leading, 4)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.7), value: armed)
+            }
+            .simultaneousGesture(enabled ? drag : nil)
+    }
+
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 14)
+            .onChanged { value in
+                let x = leftward ? -value.translation.width : value.translation.width
+                if horizontal == nil {
+                    horizontal = x > 0 && abs(value.translation.width) > abs(value.translation.height) * 1.5
+                }
+                guard horizontal == true else { return }
+                let along = max(0, x)
+                // Follows the finger, then resists past the mark.
+                pull = along <= trigger ? along : min(maxPull, trigger + (along - trigger) * 0.35)
+                let nowArmed = pull >= trigger
+                if nowArmed != armed {
+                    armed = nowArmed
+                    if nowArmed { Haptics.tap() }
+                }
+            }
+            .onEnded { _ in
+                if horizontal == true, armed { onReply() }
+                horizontal = nil
+                armed = false
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) { pull = 0 }
+            }
+    }
+}
+
+extension View {
+    func swipeToReply(leftward: Bool, enabled: Bool, onReply: @escaping () -> Void) -> some View {
+        modifier(SwipeToReply(leftward: leftward, enabled: enabled, onReply: onReply))
+    }
+}
+
+/// The conversation's rename, clear, block and delete-for-everyone dialogs, kept apart so the
+/// conversation's own body stays small enough for the compiler.
+extension ConversationView {
+    fileprivate func contactDialogs<Content: View>(_ content: Content) -> some View {
+        content
+        .alert("Edit name", isPresented: $renaming) {
+            TextField("Name", text: $newName)
+            Button("Save") { Task { await store.rename(address, to: newName, app: app) } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Also changes it on your Ego Desktop. If they change their own name later, theirs shows instead.")
+        }
+            .confirmationDialog("Clear this conversation?", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("Clear", role: .destructive) { store.clear(address) }
+        } message: {
+            Text("All messages with \(store.name(for: address)) are removed from this iPhone. They keep theirs.")
+        }
+            .confirmationDialog("Block \(store.name(for: address))?", isPresented: $confirmBlock, titleVisibility: .visible) {
+            Button("Block", role: .destructive) { Task { await store.setBlocked(address, true, app: app) } }
+        } message: {
+            Text("You won't get their messages, requests or picture changes, here or on your Ego Desktop. You can unblock them any time.")
+        }
+            .confirmationDialog("Delete for everyone?", isPresented: Binding(get: { deletingForAll != nil }, set: { if !$0 { deletingForAll = nil } }), titleVisibility: .visible) {
+            Button("Delete for everyone", role: .destructive) {
+                guard let message = deletingForAll, let contact = contact else { return }
+                Task { await store.deleteForEveryone(message, with: contact, app: app) }
+            }
+        } message: {
+            Text("It's removed here and on their phone and Ego Desktop. Older versions of the app may still show it.")
+        }
+            .photosPicker(isPresented: $pickingPicture, selection: $pictureItems, maxSelectionCount: 1, matching: .images)
+            .onChange(of: pictureItems) { _, items in
+            guard let item = items.first else { return }
+            pictureItems = []
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                    store.setPicture(image, for: address)
+                }
+            }
+        }
     }
 }

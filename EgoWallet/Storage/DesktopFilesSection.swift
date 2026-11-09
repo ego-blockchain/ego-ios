@@ -88,7 +88,7 @@ struct SendToContactSheet: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(contact.name.isEmpty ? "Contact" : contact.name).font(.body.weight(.semibold))
+                                    Text(displayName(contact)).font(.body.weight(.semibold))
                                     Text(contact.address).font(.system(.caption2, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
                                 }
                                 Spacer()

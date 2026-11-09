@@ -58,7 +58,7 @@ enum MainTab: Int, CaseIterable {
         switch self {
         case .wallet: "Wallet"
         case .storage: "Storage"
-        case .chat: "Messenger"
+        case .chat: "Chat"
         case .market: "Market"
         case .settings: "Settings"
         }
@@ -227,7 +227,7 @@ struct EgoTabBar: View {
                     VStack(spacing: 3) {
                         Image(systemName: tab.icon)
                             .font(.system(size: 18, weight: .semibold))
-                            .symbolEffect(.bounce, value: on)
+                            .symbolEffect(.bounce.wholeSymbol, value: on)
                         Text(tab.title)
                             .font(.system(size: 10, weight: .bold, design: .rounded))
                     }

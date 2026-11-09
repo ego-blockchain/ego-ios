@@ -21,6 +21,8 @@ struct StorageView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .task {
+            // Let the slide into Storage finish before any work redraws the page.
+            try? await Task.sleep(for: .milliseconds(450))
             store.clearOpenedCopies()
             while !Task.isCancelled {
                 store.attach(app)

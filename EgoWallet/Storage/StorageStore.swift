@@ -668,7 +668,8 @@ final class StorageStore: ObservableObject {
     }
 
     func clearOpenedCopies() {
-        try? FileManager.default.removeItem(at: openedDir)
+        let dir = openedDir
+        Task.detached(priority: .utility) { try? FileManager.default.removeItem(at: dir) }
     }
 }
 

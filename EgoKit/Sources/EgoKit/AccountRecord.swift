@@ -34,20 +34,24 @@ public enum AccountRecord {
         public let ed25519: String
         public let sharedKeyHex: String
         public let endpoint: String
+        /// When `name` last changed on Ego Desktop (unix seconds); 0 when it doesn't say.
+        public let nameAt: Int64
 
         public var id: String { address }
 
-        public init(address: String, name: String, ed25519: String, sharedKeyHex: String, endpoint: String = "") {
+        public init(address: String, name: String, ed25519: String, sharedKeyHex: String, endpoint: String = "", nameAt: Int64 = 0) {
             self.address = address
             self.name = name
             self.ed25519 = ed25519
             self.sharedKeyHex = sharedKeyHex
             self.endpoint = endpoint
+            self.nameAt = nameAt
         }
 
         enum CodingKeys: String, CodingKey {
             case address, name, ed25519, endpoint
             case sharedKeyHex = "shared_key_hex"
+            case nameAt = "name_at"
         }
 
         public init(from decoder: Decoder) throws {
@@ -57,7 +61,48 @@ public enum AccountRecord {
             ed25519 = try c.decode(String.self, forKey: .ed25519)
             sharedKeyHex = try c.decode(String.self, forKey: .sharedKeyHex)
             endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint) ?? ""
+            nameAt = try c.decodeIfPresent(Int64.self, forKey: .nameAt) ?? 0
         }
+    }
+
+    /// One block decision. The newest per address wins between the phone and Ego Desktop.
+    public struct Block: Codable, Equatable, Sendable {
+        public let address: String
+        public let blocked: Bool
+        public let at: Int64
+
+        public init(address: String, blocked: Bool, at: Int64) {
+            self.address = address
+            self.blocked = blocked
+            self.at = at
+        }
+    }
+
+    /// A contact renamed on the phone, for Ego Desktop to take on when it's newer.
+    public struct Rename: Codable, Equatable, Sendable {
+        public let address: String
+        public let name: String
+        public let at: Int64
+
+        public init(address: String, name: String, at: Int64) {
+            self.address = address
+            self.name = name
+            self.at = at
+        }
+    }
+
+    /// Folds `incoming` decisions into `list`, newest per address winning; future-dated ones are ignored.
+    public static func merge(blocks incoming: [Block], into list: inout [Block], now: Int64) -> Bool {
+        var changed = false
+        for b in incoming where b.at <= now + 600 && b.address.hasPrefix("ego") {
+            if let i = list.firstIndex(where: { $0.address == b.address }) {
+                if b.at > list[i].at { list[i] = b; changed = true }
+            } else {
+                list.append(b)
+                changed = true
+            }
+        }
+        return changed
     }
 
     public struct File: Codable, Equatable, Identifiable, Sendable {
@@ -138,6 +183,9 @@ public enum AccountRecord {
         public var avatar: String = ""
         public var avatarAt: Int64 = 0
         public var token: String = ""
+        public var nameAt: Int64 = 0
+        public var blocks: [Block] = []
+        public var renames: [Rename] = []
 
         public init(v: UInt32 = 1, name: String = "", bundle: String = "", contacts: [Contact] = [], files: [File] = [], payments: [HistoryItem] = [], sent: [Sent] = []) {
             self.v = v
@@ -150,9 +198,10 @@ public enum AccountRecord {
         }
 
         enum CodingKeys: String, CodingKey {
-            case v, name, bundle, contacts, files, payments, sent, avatar, token
+            case v, name, bundle, contacts, files, payments, sent, avatar, token, blocks, renames
             case wantHistory = "want_history"
             case avatarAt = "avatar_at"
+            case nameAt = "name_at"
         }
 
         public init(from decoder: Decoder) throws {
@@ -168,6 +217,9 @@ public enum AccountRecord {
             avatar = try c.decodeIfPresent(String.self, forKey: .avatar) ?? ""
             avatarAt = try c.decodeIfPresent(Int64.self, forKey: .avatarAt) ?? 0
             token = try c.decodeIfPresent(String.self, forKey: .token) ?? ""
+            nameAt = try c.decodeIfPresent(Int64.self, forKey: .nameAt) ?? 0
+            blocks = try c.decodeIfPresent([Block].self, forKey: .blocks) ?? []
+            renames = try c.decodeIfPresent([Rename].self, forKey: .renames) ?? []
         }
     }
 
