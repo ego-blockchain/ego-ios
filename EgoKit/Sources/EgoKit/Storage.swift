@@ -50,6 +50,8 @@ public enum EgoStorage {
         Plan(id: "basic", name: "Basic", gb: 50, monthlyUsd: 0.79, annualUsd: 7.90),
         Plan(id: "pro", name: "Pro", gb: 200, monthlyUsd: 1.99, annualUsd: 19.90, highlight: true),
         Plan(id: "max", name: "Max", gb: 1024, monthlyUsd: 4.99, annualUsd: 49.90),
+        Plan(id: "ultra", name: "Ultra", gb: 2048, monthlyUsd: 7.99, annualUsd: 79.90),
+        Plan(id: "mega", name: "Mega", gb: 10240, monthlyUsd: 39.99, annualUsd: 399.90),
     ]
 
     public struct Subscription: Equatable, Sendable {
