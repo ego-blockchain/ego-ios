@@ -202,7 +202,12 @@ struct MainTabs: View {
                 guard scenePhase == .active, app.phase == .ready else { continue }
                 await app.refresh()
                 await MessengerStore.shared.refresh(app)
+                await PushRelay.shared.register(app)
             }
+        }
+        .task {
+            PushRelay.shared.start()
+            await PushRelay.shared.register(app)
         }
         .onAppear { open(app.alertTarget) }
         .onChange(of: app.alertTarget) { _, target in open(target) }

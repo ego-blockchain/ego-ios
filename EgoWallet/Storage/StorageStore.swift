@@ -16,6 +16,8 @@ final class StorageStore: ObservableObject {
     @Published private(set) var subscription: EgoStorage.Subscription?
     @Published private(set) var subscriptionChecked = false
     @Published private(set) var capacity: StorageCapacity?
+    /// Plans on sale now: Ultra and Mega appear once a gateway lists them (from block 109,635).
+    @Published private(set) var openPlans = EgoStorage.openPlans(listed: nil)
     @Published private(set) var priceMicroUsd: UInt64?
     @Published var problem: String?
     /// What's being done right now, such as "Encrypting 3 files…".
@@ -123,8 +125,10 @@ final class StorageStore: ObservableObject {
         async let cap = try? app.perform { try await $0.storageCapacity() }
         async let price = try? app.egocPriceMicroUsd()
         async let history = try? app.longHistory()
-        let (c, p, h) = await (cap, price, history)
+        async let listed = try? app.perform { try await $0.storagePlanNames() }
+        let (c, p, h, l) = await (cap, price, history, listed)
         if let c { capacity = c }
+        if let l { openPlans = EgoStorage.openPlans(listed: l) }
         if let p { priceMicroUsd = p }
         if let h {
             subscription = EgoStorage.subscription(in: h, of: owner, egocPriceMicroUsd: p ?? priceMicroUsd)

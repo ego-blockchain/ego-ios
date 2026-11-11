@@ -3,6 +3,7 @@ import UserNotifications
 
 @main
 struct EgoWalletApp: App {
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var pushDelegate
     @StateObject private var model = AppModel()
     @Environment(\.scenePhase) private var phase
 

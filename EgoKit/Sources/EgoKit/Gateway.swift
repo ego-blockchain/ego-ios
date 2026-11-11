@@ -120,6 +120,19 @@ public struct HistoryItem: Codable, Equatable, Identifiable, Sendable {
 
     public var id: String { hash }
 
+    public init(hash: String, from: String, to: String, amount: UInt64, timestamp: Int64, memo: String?,
+                txType: String?, blockHeight: UInt64?, feeUegoc: UInt64?) {
+        self.hash = hash
+        self.from = from
+        self.to = to
+        self.amount = amount
+        self.timestamp = timestamp
+        self.memo = memo
+        self.txType = txType
+        self.blockHeight = blockHeight
+        self.feeUegoc = feeUegoc
+    }
+
     enum CodingKeys: String, CodingKey {
         case hash, from, to, amount, timestamp, memo
         case txType = "tx_type"
@@ -258,6 +271,14 @@ public final class GatewayClient: @unchecked Sendable {
         struct Found: Decodable { let hash: String; let status: String? }
         let found: Found? = try await call("wallet.getTransaction", ["hash": hash])
         return found?.hash == hash
+    }
+
+    /// The names of the storage plans this gateway sells now (Ultra and Mega only from their block).
+    public func storagePlanNames() async throws -> Set<String> {
+        struct Listed: Decodable { let name: String }
+        struct Plans: Decodable { let plans: [Listed] }
+        let answer: Plans = try await call("storage.plans", Empty())
+        return Set(answer.plans.map(\.name))
     }
 
     public func storageCapacity() async throws -> StorageCapacity {

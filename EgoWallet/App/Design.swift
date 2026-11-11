@@ -256,6 +256,14 @@ struct AddressInput: View {
     let placeholder: String
     @Binding var text: String
     var problem: String?
+    @FocusState private var focused: Bool
+
+    /// While typing, an address is "wrong" until its last letter: only say so once
+    /// the field is left, or the text is as long as an address (a paste, say).
+    private var showProblem: Bool {
+        guard problem != nil, !text.isEmpty else { return false }
+        return !focused || text.count >= 42
+    }
 
     var body: some View {
         GlassField(label: label, icon: "person.crop.circle", trailing: AnyView(
@@ -267,20 +275,22 @@ struct AddressInput: View {
             }
             .foregroundStyle(Brand.lime)
         )) {
+            // Two lines kept from the start, so a long address doesn't push the screen down as it wraps.
             TextField(placeholder, text: $text, axis: .vertical)
                 .font(.system(.callout, design: .monospaced))
                 .foregroundStyle(Brand.text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .lineLimit(1...3)
-            if let problem, !text.isEmpty {
+                .lineLimit(2, reservesSpace: true)
+                .focused($focused)
+            if showProblem, let problem {
                 Label(problem, systemImage: "exclamationmark.circle.fill")
                     .font(.caption)
                     .foregroundStyle(Brand.danger)
                     .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.2), value: problem)
+        .animation(.easeOut(duration: 0.2), value: showProblem)
     }
 }
 

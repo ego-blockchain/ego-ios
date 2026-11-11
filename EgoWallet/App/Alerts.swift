@@ -294,6 +294,14 @@ final class NotificationRelay: NSObject, UNUserNotificationCenterDelegate {
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let info = notification.request.content.userInfo
+        // A push from the server while open: the app reads the message itself and
+        // alerts in its own words, so the push stays quiet.
+        if info["ego"] != nil {
+            await MainActor.run {
+                if let model = self.model, model.phase == .ready { Task { await MessengerStore.shared.refresh(model) } }
+            }
+            return []
+        }
         let peer = info["peer"] as? String
         let viewing = await MainActor.run { MessengerStore.shared.viewing }
         if let peer, peer == viewing { return [] }
@@ -303,8 +311,9 @@ final class NotificationRelay: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
         let target: AlertTarget?
-        switch info["open"] as? String {
-        case "chat": target = (info["peer"] as? String).map { .chat($0) }
+        let pushedFrom = (info["ego"] as? [String: Any])?["from"] as? String
+        switch info["open"] as? String ?? pushedFrom.map({ _ in "chat" }) {
+        case "chat": target = ((info["peer"] as? String) ?? pushedFrom).map { .chat($0) }
         case "chats": target = .chats
         case "wallet": target = .wallet
         default: target = nil

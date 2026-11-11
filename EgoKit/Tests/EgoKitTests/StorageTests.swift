@@ -26,6 +26,30 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(EgoStorage.memo(for: pro, billing: .monthly), "Ego Storage Pro – monthly ($1.99)")
     }
 
+    func testUltraAndMegaCountOnlyFromTheirBlock() {
+        func paid(_ memo: String, height: UInt64) -> EgoStorage.Subscription? {
+            let json = """
+            {"hash":"0x1","from":"egot1me","to":"\(EgoStorage.feeSink)","amount":0,"timestamp":1000,
+             "memo":"\(memo)","tx_type":"credits_pay","block_height":\(height)}
+            """
+            let tx = try! JSONDecoder().decode(HistoryItem.self, from: Data(json.utf8))
+            return EgoStorage.subscription(in: [tx], of: me, egocPriceMicroUsd: cent)
+        }
+        let at = EgoStorage.bigPlansFromHeight
+        XCTAssertNil(paid("credits_pay:799:plan:Ultra:monthly", height: at - 1))
+        XCTAssertNil(paid("credits_pay:3999:plan:Mega:monthly", height: at - 1))
+        XCTAssertEqual(paid("credits_pay:799:plan:Ultra:monthly", height: at)?.plan.gb, 2048)
+        XCTAssertEqual(paid("credits_pay:39990:plan:Mega:annual", height: at)?.plan.gb, 10240)
+        XCTAssertNil(paid("credits_pay:3998:plan:Mega:monthly", height: at))
+        XCTAssertEqual(paid("credits_pay:199:plan:Pro:monthly", height: at - 1)?.plan.id, "pro")
+
+        XCTAssertEqual(EgoStorage.openPlans(listed: nil).map(\.id), ["free", "basic", "pro", "max"])
+        XCTAssertEqual(EgoStorage.openPlans(listed: ["Basic", "Pro", "Max"]).count, 4)
+        XCTAssertEqual(EgoStorage.openPlans(listed: ["Basic", "Pro", "Max", "Ultra", "Mega"]).map(\.id).suffix(2), ["ultra", "mega"])
+        let mega = EgoStorage.plans.first { $0.id == "mega" }!
+        XCTAssertEqual(EgoStorage.planMemo(for: mega, billing: .annual), "credits_pay:39990:plan:Mega:annual")
+    }
+
     func testNewestValidPlanSetsTheQuota() {
         let history = [
             egusd("credits_pay:79:plan:Basic:monthly", at: 1_000),

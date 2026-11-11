@@ -104,6 +104,8 @@ func shortAddress(_ address: String) -> String {
 
 func relativeTime(_ ts: Int64) -> String {
     let date = Date(timeIntervalSince1970: TimeInterval(ts))
+    // A clock a few seconds ahead of this iPhone's would otherwise read "in 0 secs".
+    if abs(date.timeIntervalSinceNow) < 45 { return "now" }
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated
     return formatter.localizedString(for: date, relativeTo: Date())

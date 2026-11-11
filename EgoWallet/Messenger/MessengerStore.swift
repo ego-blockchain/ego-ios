@@ -1,3 +1,4 @@
+import UserNotifications
 import EgoKit
 import Foundation
 import UIKit
@@ -121,6 +122,10 @@ final class MessengerStore: ObservableObject {
     @Published private(set) var myAvatar = ""
     @Published private(set) var myName = ""
     @Published private(set) var thinking = false
+
+    /// Your messages on their way: shown at once, marked "Sending" until a gateway takes them.
+    @Published private(set) var outgoing: Set<String> = []
+    /// Edits and saves in flight (reactions and new messages don't block the composer).
     @Published private(set) var sending = false
     @Published private(set) var refreshing = false
     @Published private(set) var historyAskedAt: Int64 = 0
@@ -221,6 +226,7 @@ final class MessengerStore: ObservableObject {
 
     private func save() {
         guard !owner.isEmpty else { return }
+        writeAlertBook()
         var saved = SavedMessenger(owner: owner)
         saved.threads = threads
         saved.ai = ai
@@ -244,6 +250,22 @@ final class MessengerStore: ObservableObject {
         guard let data = try? JSONEncoder().encode(saved) else { return }
         try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
+
+    /// Names and preview keys for the notification extension, so a chat alert
+    /// can show who wrote and what, while Ego Wallet is closed.
+    private func writeAlertBook() {
+        var book: [String: ChatAlerts.Entry] = [:]
+        for c in contacts where !isBlocked(c.address) {
+            guard let key = ChatAlerts.previewKeyHex(sharedKeyHex: c.sharedKeyHex) else { continue }
+            book[c.address] = ChatAlerts.Entry(name: name(for: c.address), key: key)
+        }
+        if book != lastAlertBook {
+            ChatAlerts.save(book)
+            lastAlertBook = book
+        }
+    }
+
+    private var lastAlertBook: [String: ChatAlerts.Entry]?
 
     var contacts: [AccountRecord.Contact] {
         var out = AccountStore.shared.contacts
@@ -545,7 +567,7 @@ final class MessengerStore: ObservableObject {
                   let plain = Messenger.decrypt(bundle, seq: seq, me: me, sharedKeyHex: contact.sharedKeyHex, ratchet: ratchet) else { continue }
             if apply(bundle, content: plain, me: me), bundle.from != me {
                 if now - bundle.ts < Self.receiptWindow { arrived[peer, default: []].append(bundle.id) }
-                if now - bundle.ts < Self.alertWindow, !app.mailAlerted(sealedID),
+                if now - bundle.ts < Self.alertWindow, !app.mailAlerted(sealedID), await !Self.alertedByPush(bundle.id),
                    let message = threads[peer]?.last(where: { $0.id == bundle.id }) {
                     alerting[peer, default: []].append(message)
                 }
@@ -563,6 +585,13 @@ final class MessengerStore: ObservableObject {
             try? await post(Messenger.Outgoing.receipt(read: false, from: me, to: peer, ids: ids), to: peer, ed25519: contact.ed25519, app: app)
         }
         await resendRequests(app)
+    }
+
+    /// Whether the push alert for this message is already on the iPhone.
+    private static func alertedByPush(_ id: String) async -> Bool {
+        await UNUserNotificationCenter.current().deliveredNotifications().contains {
+            ($0.request.content.userInfo["ego"] as? [String: Any])?["id"] as? String == id
+        }
     }
 
     private func askForHistoryOnce(_ app: AppModel) async {
@@ -726,29 +755,52 @@ final class MessengerStore: ObservableObject {
             problem = WalletError.locked.errorDescription
             return false
         }
-        sending = true
-        defer { sending = false }
+        let shownEarly: Bool = switch body {
+        case .text, .reply, .file: true
+        default: false
+        }
+        if case .edit = body { sending = true }
+        defer { if case .edit = body { sending = false } }
+        var early: String?
         do {
             let (type, content) = Messenger.encode(body)
             let ts = Int64(Date().timeIntervalSince1970)
             let message = try AccountRecord.chatMessage(from: key.address, to: contact.address, ts: ts, type: type, text: content, sharedKeyHex: contact.sharedKeyHex)
             let delivery = try AccountRecord.delivery(of: message.bundle, to: contact, ts: ts, with: key)
-            try await app.perform { try await $0.deliver(delivery) }
-            if let bundle = Messenger.Bundle(parsing: message.bundle) {
+            let bundle = Messenger.Bundle(parsing: message.bundle)
+            if shownEarly, let bundle {
+                early = message.id
+                outgoing.insert(message.id)
                 apply(bundle, content: content, me: key.address)
             }
-            switch body {
-            case .text(let text), .reply(let text, _):
-                await AccountStore.shared.recordSent(AccountRecord.Sent(id: message.id, to: contact.address, content: text, messageType: "text", ts: ts), app: app)
-            case .file(let link):
-                await AccountStore.shared.recordSent(AccountRecord.Sent(id: message.id, to: contact.address, content: link, messageType: "file_bundle", ts: ts), app: app)
-            default:
-                break
+            defer { outgoing.remove(message.id) }
+            try await app.perform { try await $0.deliver(delivery) }
+            if !shownEarly, let bundle {
+                apply(bundle, content: content, me: key.address)
             }
             problem = nil
             save()
+            // The copy for Ego Desktop's history is saved in the background: the
+            // message is already delivered, so the composer shouldn't wait for it.
+            let sent: AccountRecord.Sent? = switch body {
+            case .text(let text), .reply(let text, _):
+                AccountRecord.Sent(id: message.id, to: contact.address, content: text, messageType: "text", ts: ts)
+            case .file(let link):
+                AccountRecord.Sent(id: message.id, to: contact.address, content: link, messageType: "file_bundle", ts: ts)
+            default:
+                nil
+            }
+            if let sent {
+                Task { await AccountStore.shared.recordSent(sent, app: app) }
+                let preview = ChatAlerts.seal(sent.messageType == "text" ? sent.content : "📎 Photo or file", sharedKeyHex: contact.sharedKeyHex) ?? ""
+                let to = contact.address
+                Task { await PushRelay.shared.notify(key, to: to, id: message.id, preview: preview) }
+            }
             return true
         } catch {
+            if let early {
+                threads[contact.address]?.removeAll { $0.id == early }
+            }
             problem = app.message(for: error)
             return false
         }
@@ -782,6 +834,9 @@ final class MessengerStore: ObservableObject {
         save()
         do {
             try await sendRequest(entry, app: app)
+            if let key = app.key {
+                Task { await PushRelay.shared.notify(key, to: entry.address, id: "request-\(now)", kind: "request") }
+            }
             return nil
         } catch {
             return app.message(for: error)

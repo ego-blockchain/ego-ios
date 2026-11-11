@@ -253,8 +253,10 @@ final class AppModel: ObservableObject {
             balance = try await perform { try await $0.balance(of: address).uegoc }
             Task { await crossCheckBalance() }
             let limit = historyLimit
-            history = try await perform { try await $0.history(of: address, limit: limit) }
-            noteTransactions(history, owner: address)
+            let fetched = try await perform { try await $0.history(of: address, limit: limit) }
+            noteTransactions(fetched, owner: address)
+            await confirmJustSent(missingFrom: fetched)
+            history = withJustSent(fetched)
             credits = (try? await perform { try await $0.credits(of: address).credits }) ?? credits
             problem = nil
             let now = Date()
@@ -298,11 +300,71 @@ final class AppModel: ObservableObject {
     }
 
     /// Signs and sends a payment, or keeps it to send later if no node can be reached.
+    /// Payments this iPhone just sent, shown as pending in the history until a
+    /// gateway lists them (most gateways list only confirmed transactions).
+    private var justSent: [HistoryItem] = []
+
+    private func withJustSent(_ list: [HistoryItem]) -> [HistoryItem] {
+        let known = Set(list.map { $0.hash.lowercased() })
+        // Kept a day once confirmed: a busy node's rewards can push a payment off
+        // the newest page, and it shouldn't vanish from the list then.
+        let now = Int64(Date().timeIntervalSince1970)
+        justSent.removeAll {
+            known.contains($0.hash.lowercased())
+                || $0.timestamp < now - ($0.blockHeight == nil ? 30 * 60 : 24 * 3_600)
+        }
+        guard !justSent.isEmpty else { return list }
+        return (justSent + list).sorted { $0.timestamp > $1.timestamp }
+    }
+
+    /// Asks for each still-pending payment by its hash, since the newest page of
+    /// history may be all block rewards and not include it.
+    private func confirmJustSent(missingFrom list: [HistoryItem]) async {
+        let known = Set(list.map { $0.hash.lowercased() })
+        for item in justSent where item.blockHeight == nil && !known.contains(item.hash.lowercased()) {
+            let hash = item.hash
+            guard let found = try? await perform({ try await $0.transaction(hash: hash) }),
+                  found.hash.lowercased() == hash.lowercased(), found.blockHeight != nil,
+                  let i = justSent.firstIndex(where: { $0.hash == hash }) else { continue }
+            justSent[i] = found
+        }
+    }
+
+    private func notePending(_ item: QueuedPayment, hash: String) {
+        let fee = item.signed?.feeUegoc
+        let pending = HistoryItem(hash: hash, from: item.from, to: item.to, amount: item.amount,
+                                  timestamp: Int64(Date().timeIntervalSince1970), memo: item.memo.isEmpty ? nil : item.memo,
+                                  txType: item.kind == .egoc ? "transfer" : "credits_pay", blockHeight: nil, feeUegoc: fee)
+        justSent.removeAll { $0.hash == hash }
+        justSent.append(pending)
+        history = withJustSent(history.filter { $0.hash != hash })
+        watchJustSent()
+    }
+
+    private var watchingJustSent = false
+
+    /// Refreshes every few seconds until the network confirms what was just sent
+    /// (two minutes at most), so "Pending" turns into the payment by itself.
+    private func watchJustSent() {
+        guard !watchingJustSent else { return }
+        watchingJustSent = true
+        Task {
+            defer { watchingJustSent = false }
+            for _ in 0..<24 {
+                try? await Task.sleep(for: .seconds(5))
+                guard justSent.contains(where: { $0.blockHeight == nil }) else { return }
+                await refresh()
+            }
+        }
+    }
+
     private func pay(_ item: QueuedPayment) async throws -> SendOutcome {
         var item = item
         do {
             if item.signed == nil { item.signed = try await sign(item) }
-            return .sent(try await submit(item.signed!))
+            let hash = try await submit(item.signed!)
+            notePending(item, hash: hash)
+            return .sent(hash)
         } catch where AppModel.isUnreachable(error) {
             outbox.add(item)
             queued = outbox.items(from: address)
@@ -352,7 +414,8 @@ final class AppModel: ObservableObject {
                     item.signed = try await sign(item)
                     outbox.update(item)
                 }
-                _ = try await submit(item.signed!, refreshAfter: false)
+                let hash = try await submit(item.signed!, refreshAfter: false)
+                notePending(item, hash: hash)
                 outbox.remove(id)
                 sentAny = true
             } catch where AppModel.isUnreachable(error) {
@@ -742,6 +805,8 @@ final class AppModel: ObservableObject {
     }
 
     func deleteWallet() {
+        ChatAlerts.clear()
+        if let key { Task { await PushRelay.shared.unregister(key) } }
         outbox.removeAll(from: address)
         queued = []
         flushLoop?.cancel()

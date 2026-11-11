@@ -63,7 +63,7 @@ struct PlansPage: View {
                 StorageTestingNote().reveal(0.02)
                 GlassSegments(selection: $billing, options: EgoStorage.Billing.allCases) { $0 == .annual ? "Yearly · 2 months free" : "Monthly" }
                     .reveal(0.04)
-                ForEach(Array(EgoStorage.plans.enumerated()), id: \.element.id) { i, p in
+                ForEach(Array(store.openPlans.enumerated()), id: \.element.id) { i, p in
                     planCard(p).reveal(0.06 + Double(i) * 0.04)
                 }
                 capacityLine
@@ -72,6 +72,7 @@ struct PlansPage: View {
                 action
             }
         }
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if !firstTime {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -92,8 +93,11 @@ struct PlansPage: View {
 
     private var header: some View {
         VStack(spacing: 10) {
+            // As tall as the glow itself. Opened from Upgrade, the close button's bar
+            // is already above it, so it moves up into the page's top padding.
             GlowingMark(size: 54)
-                .frame(height: 110)
+                .frame(height: 92)
+                .padding(.top, firstTime ? 0 : -24)
             Text(firstTime ? "Your private cloud on Ego" : "Change your plan")
                 .font(.system(size: 26, weight: .heavy, design: .rounded))
                 .foregroundStyle(Brand.text)

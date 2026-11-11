@@ -36,6 +36,8 @@ public enum EgoStorage {
         public let monthlyUsd: Double
         public let annualUsd: Double
         public var highlight = false
+        /// The chain counts payments for this plan only from this block on.
+        public var opensAtHeight: UInt64 = 0
 
         public var bytes: UInt64 { gb * 1_000_000_000 }
         public func priceUsd(_ billing: Billing) -> Double { billing == .annual ? annualUsd : monthlyUsd }
@@ -50,9 +52,18 @@ public enum EgoStorage {
         Plan(id: "basic", name: "Basic", gb: 50, monthlyUsd: 0.79, annualUsd: 7.90),
         Plan(id: "pro", name: "Pro", gb: 200, monthlyUsd: 1.99, annualUsd: 19.90, highlight: true),
         Plan(id: "max", name: "Max", gb: 1024, monthlyUsd: 4.99, annualUsd: 49.90),
-        Plan(id: "ultra", name: "Ultra", gb: 2048, monthlyUsd: 7.99, annualUsd: 79.90),
-        Plan(id: "mega", name: "Mega", gb: 10240, monthlyUsd: 39.99, annualUsd: 399.90),
+        Plan(id: "ultra", name: "Ultra", gb: 2048, monthlyUsd: 7.99, annualUsd: 79.90, opensAtHeight: bigPlansFromHeight),
+        Plan(id: "mega", name: "Mega", gb: 10240, monthlyUsd: 39.99, annualUsd: 399.90, opensAtHeight: bigPlansFromHeight),
     ]
+
+    /// Ultra and Mega count from this block, as Ego Desktop's BIG_PLANS_FROM_HEIGHT.
+    public static let bigPlansFromHeight: UInt64 = 109_635
+
+    /// The plans on sale, given the names a gateway's storage.plans lists; a gateway
+    /// that can't say leaves only the plans open from the start.
+    public static func openPlans(listed names: Set<String>?) -> [Plan] {
+        plans.filter { $0.opensAtHeight == 0 || names?.contains($0.name) == true }
+    }
 
     public struct Subscription: Equatable, Sendable {
         public let plan: Plan
@@ -87,8 +98,8 @@ public enum EgoStorage {
         "Ego Storage \(plan.name) – \(billing.rawValue) (\(String(format: "$%.2f", plan.priceUsd(billing))))"
     }
 
-    private static func paid(_ name: Substring, _ billing: Substring) -> (Plan, Billing)? {
-        guard let plan = plans.first(where: { !$0.isFree && $0.name == name }),
+    private static func paid(_ name: Substring, _ billing: Substring, height: UInt64) -> (Plan, Billing)? {
+        guard let plan = plans.first(where: { !$0.isFree && $0.name == name && height >= $0.opensAtHeight }),
               let billing = Billing(rawValue: String(billing)) else { return nil }
         return (plan, billing)
     }
@@ -96,10 +107,12 @@ public enum EgoStorage {
     /// The plan a payment buys, checked as Ego Desktop's quota check does.
     static func plan(of item: HistoryItem, egocPriceMicroUsd: UInt64?) -> (Plan, Billing)? {
         let memo = item.memo ?? ""
+        // A payment still waiting for a block is judged when it lands; until then it buys no space.
+        let height = item.blockHeight ?? .max
         if item.txType == "credits_pay", item.to == feeSink {
             let parts = memo.split(separator: ":", omittingEmptySubsequences: false)
             guard parts.count == 5, parts[0] == "credits_pay", parts[2] == "plan", let credits = UInt64(parts[1]),
-                  let (plan, billing) = paid(parts[3], parts[4]), credits >= plan.credits(billing) else { return nil }
+                  let (plan, billing) = paid(parts[3], parts[4], height: height), credits >= plan.credits(billing) else { return nil }
             return (plan, billing)
         }
         if (item.txType ?? "transfer") == "transfer", item.to == poolAddress, memo.hasPrefix("Ego Storage ") {
@@ -107,7 +120,7 @@ public enum EgoStorage {
             guard let space = rest.firstIndex(of: " "), let price = egocPriceMicroUsd, price > 0 else { return nil }
             let name = rest[..<space]
             let billing = rest[space...].drop { $0 == " " || $0 == "–" || $0 == "-" }.prefix { $0 != " " }
-            guard let (plan, b) = paid(name, billing) else { return nil }
+            guard let (plan, b) = paid(name, billing, height: height) else { return nil }
             let paidUsd = Double(item.amount) / 1e6 * Double(price) / 1e6
             return paidUsd >= plan.priceUsd(b) * egocPlanTolerance ? (plan, b) : nil
         }

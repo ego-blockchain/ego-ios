@@ -297,7 +297,7 @@ struct ConversationView: View {
                                           last: !sameRun(message, following),
                                           quoted: message.replyTo.flatMap { id in messages.first { $0.id == id } },
                                           me: app.address,
-                                          status: message.mine(app.address) ? (message.read ? "Read" : message.delivered ? "Delivered" : "Sent") : nil,
+                                          status: message.mine(app.address) ? (store.outgoing.contains(message.id) ? "Sending…" : message.read ? "Read" : message.delivered ? "Delivered" : "Sent") : nil,
                                           onReact: { code in react(code, message) },
                                           onOpen: { viewing = $0 },
                                           peer: .init(image: peerPicture, name: peerName, address: address))
@@ -476,7 +476,7 @@ struct ConversationView: View {
                 chip(icon: attachment.isVideo ? "video.fill" : "photo.fill", title: attachment.name,
                      detail: uploading ? "Encrypting and uploading…" : "Ready to send") { if !uploading { self.attachment = nil } }
             }
-            let ready = contact != nil && !store.sending && !uploading
+            let ready = contact != nil && !(editing != nil && store.sending) && !uploading
                 && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (attachment != nil && editing == nil))
             HStack(alignment: .bottom, spacing: 6) {
                 if editing == nil {
@@ -504,7 +504,7 @@ struct ConversationView: View {
                         Task { await send() }
                     } label: {
                         Group {
-                            if store.sending || uploading {
+                            if uploading || (editing != nil && store.sending) {
                                 ProgressView().tint(.white)
                             } else {
                                 Image(systemName: editing == nil ? "arrow.up" : "checkmark").font(.system(size: 16, weight: .heavy))
@@ -593,10 +593,14 @@ struct ConversationView: View {
             }
         }
         guard !text.isEmpty else { return }
-        let body: Messenger.Body = replying.map { .reply(text: text, to: $0.id) } ?? .text(text)
-        if await store.send(body, to: contact, app: app) {
-            draft = ""
-            replying = nil
+        let quoted = replying
+        let body: Messenger.Body = quoted.map { .reply(text: text, to: $0.id) } ?? .text(text)
+        // Empty the box straight away, like any chat app; put the text back only if it didn't go.
+        draft = ""
+        replying = nil
+        if await !store.send(body, to: contact, app: app), draft.isEmpty {
+            draft = text
+            replying = quoted
         }
     }
 }
