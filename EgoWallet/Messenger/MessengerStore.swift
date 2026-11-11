@@ -130,6 +130,7 @@ final class MessengerStore: ObservableObject {
     @Published private(set) var customAvatars: [String: Stamped] = [:]
     @Published var problem: String?
     @Published var notice: String?
+    var viewing: String?
 
     private var cursors: [String: Int64] = [:]
     private var seen: [String] = []
@@ -152,6 +153,7 @@ final class MessengerStore: ObservableObject {
     private static let requestGiveUp: Int64 = 7 * 86_400
     private static let receiptWindow: Int64 = 2 * 86_400
     private static let maxAvatarBytes = 96 * 1024
+    private static let alertWindow: Int64 = 10 * 60
 
     private init() {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -419,7 +421,7 @@ final class MessengerStore: ObservableObject {
     private func post(_ fields: [String: Any], to address: String, ed25519: String, app: AppModel) async throws {
         guard let key = app.key else { throw WalletError.locked }
         guard let ed = Messenger.publicKey(ed25519: ed25519) else { throw MessengerError.badKey }
-        let sealed = try Messenger.seal(try Messenger.Outgoing.data(fields), to: address, ed25519: ed)
+        let sealed = try Messenger.seal(try Messenger.Outgoing.data(fields), to: address, ed25519: ed, alert: Messenger.alert(for: fields, to: address))
         try await app.perform { try await $0.sendMail(sealed, with: key) }
     }
 
@@ -490,22 +492,27 @@ final class MessengerStore: ObservableObject {
         }
 
         let seed = key.seed
-        var inners: [Messenger.Inner] = []
+        var inners: [(Messenger.Inner, String)] = []
         for kept in fetched.sorted(by: { $0.at < $1.at }) where !seenSet.contains(kept.sealed.id) {
             remember(kept.sealed.id)
-            if let inner = Messenger.open(kept.sealed, seed: seed) { inners.append(inner) }
+            if let inner = Messenger.open(kept.sealed, seed: seed) { inners.append((inner, kept.sealed.id)) }
         }
 
         var contactsChanged = false
-        var chats: [(Messenger.Bundle, UInt64)] = []
-        for inner in inners {
+        var chats: [(Messenger.Bundle, UInt64, String)] = []
+        for (inner, sealedID) in inners {
             switch inner.type {
             case "chat_message":
                 if let text = inner.bundle, let bundle = Messenger.Bundle(parsing: text), bundle.from == me || bundle.to == me, !isBlocked(bundle.from) {
-                    chats.append((bundle, inner.seq ?? 0))
+                    chats.append((bundle, inner.seq ?? 0, sealedID))
                 }
             case "contact_request" where !isBlocked(inner.fromAddr ?? ""):
+                let before = requests.count
                 contactsChanged = await handleRequest(inner, me: me, app: app) || contactsChanged
+                if requests.count > before, let from = inner.fromAddr, !app.mailAlerted(sealedID) {
+                    AppModel.post(id: "request/\(from)", title: "New contact request",
+                                  body: "\(inner.fromName.flatMap { $0.isEmpty ? nil : $0 } ?? shortAddress(from)) wants to connect with you.", target: .chats)
+                }
             case "contact_response":
                 contactsChanged = handleResponse(inner) || contactsChanged
             case "profile_update":
@@ -530,14 +537,24 @@ final class MessengerStore: ObservableObject {
 
         let book = Dictionary(contacts.map { ($0.address, $0) }, uniquingKeysWith: { a, _ in a })
         var arrived: [String: [String]] = [:]
+        var alerting: [String: [ThreadMessage]] = [:]
         let now = Int64(Date().timeIntervalSince1970)
-        for (bundle, seq) in chats.sorted(by: { $0.0.ts < $1.0.ts }) {
+        for (bundle, seq, sealedID) in chats.sorted(by: { $0.0.ts < $1.0.ts }) {
             let peer = bundle.from == me ? bundle.to : bundle.from
             guard let contact = book[peer],
                   let plain = Messenger.decrypt(bundle, seq: seq, me: me, sharedKeyHex: contact.sharedKeyHex, ratchet: ratchet) else { continue }
-            if apply(bundle, content: plain, me: me), bundle.from != me, now - bundle.ts < Self.receiptWindow {
-                arrived[peer, default: []].append(bundle.id)
+            if apply(bundle, content: plain, me: me), bundle.from != me {
+                if now - bundle.ts < Self.receiptWindow { arrived[peer, default: []].append(bundle.id) }
+                if now - bundle.ts < Self.alertWindow, !app.mailAlerted(sealedID),
+                   let message = threads[peer]?.last(where: { $0.id == bundle.id }) {
+                    alerting[peer, default: []].append(message)
+                }
             }
+        }
+        for (peer, messages) in alerting {
+            guard let newest = messages.last else { continue }
+            let body = messages.count == 1 ? newest.preview : "\(messages.count) new messages. Latest: \(newest.preview)"
+            AppModel.post(id: "chat/\(peer)", title: name(for: peer), body: body, target: .chat(peer))
         }
         save()
         if contactsChanged { await publishContacts(app) }
@@ -558,6 +575,10 @@ final class MessengerStore: ObservableObject {
         historyAskedAt = now
         save()
         await AccountStore.shared.updatePhone(app) { $0.wantHistory = now }
+    }
+
+    func hasOpened(_ sealedID: String) -> Bool {
+        seenSet.contains(sealedID)
     }
 
     private func remember(_ id: String) {

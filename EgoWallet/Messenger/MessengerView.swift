@@ -2,6 +2,7 @@ import EgoKit
 import PhotosUI
 import QuickLook
 import SwiftUI
+import UserNotifications
 
 enum MessengerPage: Hashable {
     case ai
@@ -124,6 +125,7 @@ struct MessengerView: View {
                 .presentationBackground(Brand.ink)
         }
         .task {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["chats", "requests"])
             while !Task.isCancelled {
                 await store.refresh(app)
                 try? await Task.sleep(for: .seconds(15))
@@ -368,6 +370,11 @@ struct ConversationView: View {
             Task { await attach(item) }
         }
         .quickLookPreview($viewing)
+        .onAppear {
+            store.viewing = address
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["chat/\(address)"])
+        }
+        .onDisappear { if store.viewing == address { store.viewing = nil } }
         .task {
             storage.attach(app)
             store.markRead(address, app: app)

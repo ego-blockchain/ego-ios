@@ -74,6 +74,42 @@ final class MessengerTests: XCTestCase {
         XCTAssertNil(Messenger.open(sealed, seed: [UInt8](repeating: 78, count: 32)))
     }
 
+    func testOnlyContactRequestsToOthersAskForAnAlert() throws {
+        let request = Messenger.Outgoing.contactRequest(from: "egot1me", name: "Me", ed25519Hex: "00", sharedKeyHex: "11", token: "")
+        XCTAssertEqual(Messenger.alert(for: request, to: "egot1you"), Messenger.alertRequest)
+        XCTAssertEqual(Messenger.alert(for: request, to: "egot1me"), "")
+        XCTAssertEqual(Messenger.alert(for: Messenger.Outgoing.receipt(read: true, from: "egot1me", to: "egot1you", ids: ["x"]), to: "egot1you"), "")
+        XCTAssertEqual(Messenger.alert(for: Messenger.Outgoing.profile(from: "egot1me", avatar: "", name: "Me"), to: "egot1you"), "")
+
+        let seed = [UInt8](repeating: 77, count: 32)
+        let ed = Array(try Curve25519.Signing.PrivateKey(rawRepresentation: Data(seed)).publicKey.rawRepresentation)
+        let quiet = try Messenger.seal(Data("{}".utf8), to: "egot1you", ed25519: ed)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(quiet), as: UTF8.self).contains("alert"))
+        let loud = try Messenger.seal(Data("{}".utf8), to: "egot1you", ed25519: ed, alert: Messenger.alertRequest)
+        let json = String(decoding: try JSONEncoder().encode(loud), as: UTF8.self)
+        XCTAssertTrue(json.contains("\"alert\":\"request\""))
+        XCTAssertEqual(try JSONDecoder().decode(Messenger.Sealed.self, from: Data(json.utf8)), loud)
+        XCTAssertEqual(try JSONDecoder().decode(Messenger.Sealed.self, from: try JSONEncoder().encode(quiet)).alert, "")
+    }
+
+    func testAnAlertKeyGrantMatchesTheDesktopAndVerifies() throws {
+        XCTAssertEqual(Messenger.readerBytes(owner: "egot1a", reader: "ff", until: 9), Array("ego/mail-reader/v1\negot1a\nff\n9".utf8))
+        XCTAssertEqual(Messenger.peekBytes(owner: "egot1a", reader: "ff", ts: 5, since: 7), Array("ego/mail-peek/v1\negot1a\nff\n5\n7".utf8))
+        let key = try EgoKey(seed: [UInt8](repeating: 5, count: 32))
+        let reader = Curve25519.Signing.PrivateKey()
+        let now: Int64 = 1_000_000
+        let grant = try Messenger.ReaderGrant.make(reader: Array(reader.publicKey.rawRepresentation), with: key, now: now)
+        XCTAssertEqual(grant.owner, key.address)
+        XCTAssertEqual(grant.until, now + 90 * 86_400)
+        let owner = try Curve25519.Signing.PublicKey(rawRepresentation: Data(key.publicKey))
+        let message = Data(Messenger.readerBytes(owner: grant.owner, reader: grant.reader, until: grant.until))
+        XCTAssertTrue(owner.isValidSignature(Data(Hex.decode(grant.grant) ?? []), for: message))
+        XCTAssertFalse(grant.needsRenewal(now: now + 29 * 86_400))
+        XCTAssertTrue(grant.needsRenewal(now: now + 31 * 86_400))
+        let saved = try JSONDecoder().decode(Messenger.ReaderGrant.self, from: try JSONEncoder().encode(grant))
+        XCTAssertEqual(saved, grant)
+    }
+
     func testContactCardsRoundTripAndMatchTheDesktopFormat() {
         let ed = [UInt8](repeating: 3, count: 32)
         let card = Messenger.ContactCard(address: "egot1abc", ed25519: ed, name: "Ana", endpoint: "", token: "ff00")

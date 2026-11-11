@@ -50,6 +50,7 @@ final class AppModel: ObservableObject {
         history.count >= historyLimit && historyLimit < AppModel.historyMax
     }
     @Published var gatewayHost: String?
+    @Published var alertTarget: AlertTarget?
     @Published private(set) var balanceWarning: String?
     @Published var problem: String?
     @Published var seedMissing = false
@@ -203,6 +204,8 @@ final class AppModel: ObservableObject {
             AccountStore.shared.load(for: unlocked)
             phase = .ready
             problem = nil
+            askForAlerts()
+            renewAlertKey()
             await refresh()
             Task { await AccountStore.shared.refresh(self) }
             if queued.contains(where: \.waiting) { keepFlushing() }
@@ -251,6 +254,7 @@ final class AppModel: ObservableObject {
             Task { await crossCheckBalance() }
             let limit = historyLimit
             history = try await perform { try await $0.history(of: address, limit: limit) }
+            noteTransactions(history, owner: address)
             credits = (try? await perform { try await $0.credits(of: address).credits }) ?? credits
             problem = nil
             let now = Date()
@@ -747,6 +751,7 @@ final class AppModel: ObservableObject {
         savedByKind = [:]
         AccountStore.shared.forget()
         MessengerStore.shared.forget()
+        forgetAlerts()
         lastUpdated = nil
         vault.delete()
         key = nil

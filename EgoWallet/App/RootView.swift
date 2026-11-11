@@ -89,6 +89,7 @@ enum MainTab: Int, CaseIterable {
 /// The five sections, side by side: swipe left or right to move between them, or tap the bar.
 struct MainTabs: View {
     @EnvironmentObject private var app: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     /// One storage store for the whole app: Chat and Settings upload through it too.
     @StateObject private var storage = StorageStore()
     @State private var shown: MainTab? = MainTabs.startTab
@@ -195,6 +196,33 @@ struct MainTabs: View {
             await market
         }
         .onChange(of: app.phase) { _, _ in storage.attach(app) }
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard scenePhase == .active, app.phase == .ready else { continue }
+                await app.refresh()
+                await MessengerStore.shared.refresh(app)
+            }
+        }
+        .onAppear { open(app.alertTarget) }
+        .onChange(of: app.alertTarget) { _, target in open(target) }
+    }
+
+    private func open(_ target: AlertTarget?) {
+        guard let target else { return }
+        app.alertTarget = nil
+        switch target {
+        case .wallet:
+            path = NavigationPath()
+            shown = .wallet
+        case .chats:
+            path = NavigationPath()
+            shown = .chat
+        case .chat(let peer):
+            path = NavigationPath()
+            shown = .chat
+            if MessengerStore.shared.contact(peer) != nil { path.append(MessengerPage.contact(peer)) }
+        }
     }
 }
 

@@ -7,6 +7,9 @@ import Crypto
 
 public enum Messenger {
     public static let getDomain = "ego/mail-get/v1"
+    public static let alertChat = "chat"
+    public static let alertRequest = "request"
+    public static let readerGrantDays: Int64 = 90
     public static let editWindow: Int64 = 3_600
     public static let maxSeq: UInt64 = 1_000_000
     public struct Reaction: Hashable, Sendable {
@@ -31,19 +34,74 @@ public enum Messenger {
         public let nonce: String
         public let ct: String
         public let id: String
+        public let alert: String
 
-        public init(to: String, ephPub: String, nonce: String, ct: String, id: String) {
+        public init(to: String, ephPub: String, nonce: String, ct: String, id: String, alert: String = "") {
             self.to = to
             self.ephPub = ephPub
             self.nonce = nonce
             self.ct = ct
             self.id = id
+            self.alert = alert
         }
 
         enum CodingKeys: String, CodingKey {
-            case to, nonce, ct, id
+            case to, nonce, ct, id, alert
             case ephPub = "eph_pub"
         }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            to = try c.decode(String.self, forKey: .to)
+            ephPub = try c.decode(String.self, forKey: .ephPub)
+            nonce = try c.decode(String.self, forKey: .nonce)
+            ct = try c.decode(String.self, forKey: .ct)
+            id = try c.decode(String.self, forKey: .id)
+            alert = try c.decodeIfPresent(String.self, forKey: .alert) ?? ""
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(to, forKey: .to)
+            try c.encode(ephPub, forKey: .ephPub)
+            try c.encode(nonce, forKey: .nonce)
+            try c.encode(ct, forKey: .ct)
+            try c.encode(id, forKey: .id)
+            if !alert.isEmpty { try c.encode(alert, forKey: .alert) }
+        }
+    }
+
+    public struct ReaderGrant: Codable, Equatable, Sendable {
+        public let owner: String
+        public let reader: String
+        public let until: Int64
+        public let grant: String
+        public let pubkey: String
+
+        public init(owner: String, reader: String, until: Int64, grant: String, pubkey: String) {
+            self.owner = owner
+            self.reader = reader
+            self.until = until
+            self.grant = grant
+            self.pubkey = pubkey
+        }
+
+        public static func make(reader: [UInt8], with key: EgoKey, now: Int64) throws -> ReaderGrant {
+            let readerHex = Hex.encode(reader)
+            let until = now + Messenger.readerGrantDays * 86_400
+            let sig = try key.sign(Messenger.readerBytes(owner: key.address, reader: readerHex, until: until))
+            return ReaderGrant(owner: key.address, reader: readerHex, until: until, grant: Hex.encode(sig), pubkey: Hex.encode(key.publicKey))
+        }
+
+        public func needsRenewal(now: Int64) -> Bool {
+            until - now < 60 * 86_400
+        }
+    }
+
+    public struct Peeked: Decodable, Equatable, Sendable {
+        public let id: String
+        public let at: Int64
+        public let alert: String
     }
 
     public struct Kept: Decodable, Equatable, Sendable {
@@ -228,7 +286,20 @@ public enum Messenger {
         return nil
     }
 
-    public static func seal(_ plaintext: Data, to: String, ed25519: [UInt8]) throws -> Sealed {
+    public static func readerBytes(owner: String, reader: String, until: Int64) -> [UInt8] {
+        Array("ego/mail-reader/v1\n\(owner)\n\(reader)\n\(until)".utf8)
+    }
+
+    public static func peekBytes(owner: String, reader: String, ts: Int64, since: Int64) -> [UInt8] {
+        Array("ego/mail-peek/v1\n\(owner)\n\(reader)\n\(ts)\n\(since)".utf8)
+    }
+
+    public static func alert(for fields: [String: Any], to: String) -> String {
+        guard fields["type"] as? String == "contact_request", let from = fields["from_addr"] as? String, from != to else { return "" }
+        return alertRequest
+    }
+
+    public static func seal(_ plaintext: Data, to: String, ed25519: [UInt8], alert: String = "") throws -> Sealed {
         guard let x = Field25519.montgomery(fromEdwards: ed25519) else { throw MessengerError.badKey }
         let theirs = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: Data(x))
         let eph = Curve25519.KeyAgreement.PrivateKey()
@@ -239,7 +310,7 @@ public enum Messenger {
         let box = try AES.GCM.seal(plaintext, using: SymmetricKey(data: key), nonce: AES.GCM.Nonce(data: Data(nonce)))
         let ctHex = Hex.encode(Array(box.ciphertext) + Array(box.tag))
         let id = Hex.encode(Array(Blake3.hash(Array(ctHex.utf8)).prefix(16)))
-        return Sealed(to: to, ephPub: Hex.encode(Array(eph.publicKey.rawRepresentation)), nonce: Hex.encode(nonce), ct: ctHex, id: id)
+        return Sealed(to: to, ephPub: Hex.encode(Array(eph.publicKey.rawRepresentation)), nonce: Hex.encode(nonce), ct: ctHex, id: id, alert: alert)
     }
 
     public static func sendBytes(by: String, to: String, ts: Int64, id: String) -> [UInt8] {
@@ -570,6 +641,28 @@ public extension GatewayClient {
         let sig = try key.sign(Messenger.getBytes(owner: key.address, ts: ts))
         let answer: Answer = try await call("mail.get", Params(owner: key.address, ts: ts, since: since, pubkey: Hex.encode(key.publicKey), sig: Hex.encode(sig)))
         return (answer.mail, answer.more ?? false)
+    }
+
+    func peekMail(_ grant: Messenger.ReaderGrant, reader: Curve25519.Signing.PrivateKey, since: Int64) async throws -> (alerts: [Messenger.Peeked], latest: Int64) {
+        struct Params: Encodable {
+            let owner: String
+            let ts: Int64
+            let since: Int64
+            let reader: String
+            let until: Int64
+            let grant: String
+            let pubkey: String
+            let sig: String
+        }
+        struct Answer: Decodable {
+            let alerts: [Messenger.Peeked]
+            let latest: Int64
+        }
+        let ts = Int64(Date().timeIntervalSince1970)
+        let sig = try reader.signature(for: Data(Messenger.peekBytes(owner: grant.owner, reader: grant.reader, ts: ts, since: since)))
+        let answer: Answer = try await call("mail.peek", Params(owner: grant.owner, ts: ts, since: since, reader: grant.reader, until: grant.until,
+                                                               grant: grant.grant, pubkey: grant.pubkey, sig: Hex.encode(Array(sig))))
+        return (answer.alerts, answer.latest)
     }
 
     func sendMail(_ sealed: Messenger.Sealed, with key: EgoKey) async throws {
