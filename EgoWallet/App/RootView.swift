@@ -227,7 +227,16 @@ struct MainTabs: View {
         case .chat(let peer):
             path = NavigationPath()
             shown = .chat
-            if MessengerStore.shared.contact(peer) != nil { path.append(MessengerPage.contact(peer)) }
+            // Opened from an alert, often right after Face ID: the chats may not be loaded
+            // yet and the pager is still settling, so the conversation opens a moment later.
+            Task { @MainActor in
+                let chats = MessengerStore.shared
+                if !app.address.isEmpty { chats.load(for: app.address) }
+                try? await Task.sleep(for: .milliseconds(350))
+                if chats.contact(peer) == nil { await chats.refresh(app) }
+                guard chats.contact(peer) != nil, path.isEmpty else { return }
+                path.append(MessengerPage.contact(peer))
+            }
         }
     }
 }
