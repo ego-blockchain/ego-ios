@@ -294,30 +294,37 @@ final class NotificationRelay: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+    // iOS asks for both answers on the main thread and must get them there: replying
+    // from a background task (as the async versions of these methods do) makes UIKit
+    // stop the app as soon as a tapped alert opens it.
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         let info = notification.request.content.userInfo
-        // A push from the server while open: the app reads the message itself and
-        // alerts in its own words, so the push stays quiet.
-        let pushed = info["ego"] as? [String: Any]
-        if pushed?["kind"] as? String == "payment" {
-            await MainActor.run {
-                if let model = self.model, model.phase == .ready { Task { await model.refresh() } }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                // A push from the server while open: a payment shows as it is (and the
+                // wallet refreshes); a chat push stays quiet because the app reads the
+                // message itself and alerts in its own words.
+                let pushed = info["ego"] as? [String: Any]
+                let model = self.model.flatMap { $0.phase == .ready ? $0 : nil }
+                if pushed?["kind"] as? String == "payment" {
+                    if let model { Task { await model.refresh() } }
+                    completionHandler([.banner, .list, .sound])
+                } else if pushed != nil {
+                    if let model { Task { await MessengerStore.shared.refresh(model) } }
+                    completionHandler([])
+                } else if let peer = info["peer"] as? String, peer == MessengerStore.shared.viewing {
+                    completionHandler([])
+                } else {
+                    completionHandler([.banner, .list, .sound])
+                }
             }
-            return [.banner, .list, .sound]
         }
-        if pushed != nil {
-            await MainActor.run {
-                if let model = self.model, model.phase == .ready { Task { await MessengerStore.shared.refresh(model) } }
-            }
-            return []
-        }
-        let peer = info["peer"] as? String
-        let viewing = await MainActor.run { MessengerStore.shared.viewing }
-        if let peer, peer == viewing { return [] }
-        return [.banner, .list, .sound]
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         let target: AlertTarget?
         let pushedFrom = (info["ego"] as? [String: Any])?["from"] as? String
@@ -327,9 +334,13 @@ final class NotificationRelay: NSObject, UNUserNotificationCenterDelegate {
         case "wallet": target = .wallet
         default: target = nil
         }
-        guard let target else { return }
-        await MainActor.run {
-            if let model { model.alertTarget = target } else { pending = target }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if let target {
+                    if let model = self.model { model.alertTarget = target } else { self.pending = target }
+                }
+                completionHandler()
+            }
         }
     }
 }
