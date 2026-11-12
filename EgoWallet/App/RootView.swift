@@ -22,7 +22,8 @@ struct RootView: View {
             if scenePhase != .active && model.phase == .ready {
                 ZStack {
                     Brand.ink.ignoresSafeArea()
-                    EgoMark(size: 72)
+                    // Above the middle, clear of the Face ID check.
+                    EgoMark(size: 72).offset(y: -40)
                 }
             }
         }

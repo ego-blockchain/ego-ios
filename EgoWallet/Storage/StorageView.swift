@@ -93,11 +93,12 @@ struct PlansPage: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            // As tall as the glow itself. Opened from Upgrade, the close button's bar
-            // is already above it, so it moves up into the page's top padding.
+            // As tall as its ring; the soft glow may spill over. Opened from Upgrade,
+            // the close button's bar is already above it, so it moves up to sit just
+            // under that button.
             GlowingMark(size: 54)
-                .frame(height: 92)
-                .padding(.top, firstTime ? 0 : -24)
+                .frame(height: 80)
+                .padding(.top, firstTime ? 0 : -66)
             Text(firstTime ? "Your private cloud on Ego" : "Change your plan")
                 .font(.system(size: 26, weight: .heavy, design: .rounded))
                 .foregroundStyle(Brand.text)

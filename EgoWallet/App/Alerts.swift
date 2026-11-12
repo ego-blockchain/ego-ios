@@ -147,6 +147,8 @@ extension AppModel {
         where item.timestamp > since - Self.txLookBack && !seen.contains(item.hash) {
             seen.insert(item.hash)
             seenList.append(item.hash)
+            // The server's push already told you about it.
+            if ChatAlerts.wasPushed(item.hash) { continue }
             guard let direction = item.direction(for: owner), direction != .reward else { continue }
             let amount = Self.amountText(item)
             if direction == .received {
@@ -296,7 +298,14 @@ final class NotificationRelay: NSObject, UNUserNotificationCenterDelegate {
         let info = notification.request.content.userInfo
         // A push from the server while open: the app reads the message itself and
         // alerts in its own words, so the push stays quiet.
-        if info["ego"] != nil {
+        let pushed = info["ego"] as? [String: Any]
+        if pushed?["kind"] as? String == "payment" {
+            await MainActor.run {
+                if let model = self.model, model.phase == .ready { Task { await model.refresh() } }
+            }
+            return [.banner, .list, .sound]
+        }
+        if pushed != nil {
             await MainActor.run {
                 if let model = self.model, model.phase == .ready { Task { await MessengerStore.shared.refresh(model) } }
             }

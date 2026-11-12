@@ -1,7 +1,8 @@
 import UserNotifications
 
 /// Turns "Ego Chat: New message" into the sender's name and the message,
-/// opened with the preview key Ego Wallet keeps for that contact.
+/// opened with the preview key Ego Wallet keeps for that contact; payment alerts
+/// get the contact's name in place of their address.
 final class NotificationService: UNNotificationServiceExtension {
     private var handler: ((UNNotificationContent) -> Void)?
     private var best: UNMutableNotificationContent?
@@ -13,7 +14,15 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
         best = content
-        if let ego = content.userInfo["ego"] as? [String: Any], let from = ego["from"] as? String {
+        if let ego = content.userInfo["ego"] as? [String: Any], ego["kind"] as? String == "payment" {
+            // "From egot1abc…" becomes "From <contact>" when the other side is a contact.
+            let sent = ego["dir"] as? String == "sent"
+            if let other = ego[sent ? "to" : "from"] as? String, let name = ChatAlerts.load()[other]?.name, !name.isEmpty {
+                content.body = sent ? "To \(name). Confirmed on the network." : "From \(name)"
+            }
+            if let hash = ego["hash"] as? String { ChatAlerts.notePushed(hash) }
+            content.threadIdentifier = "wallet"
+        } else if let ego = content.userInfo["ego"] as? [String: Any], let from = ego["from"] as? String {
             let kind = ego["kind"] as? String ?? "message"
             if let entry = ChatAlerts.load()[from] {
                 content.title = entry.name

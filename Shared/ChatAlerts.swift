@@ -76,5 +76,21 @@ enum ChatAlerts {
     static func clear() {
         guard let url = bookURL else { return }
         try? FileManager.default.removeItem(at: url)
+        UserDefaults(suiteName: appGroup)?.removeObject(forKey: pushedKey)
+    }
+
+    // MARK: Payments
+
+    private static let pushedKey = "pushed.tx"
+
+    /// A payment the server already alerted, so the app doesn't alert it again.
+    static func notePushed(_ hash: String) {
+        guard let defaults = UserDefaults(suiteName: appGroup) else { return }
+        let list = (defaults.stringArray(forKey: pushedKey) ?? []) + [hash.lowercased()]
+        defaults.set(Array(list.suffix(300)), forKey: pushedKey)
+    }
+
+    static func wasPushed(_ hash: String) -> Bool {
+        UserDefaults(suiteName: appGroup)?.stringArray(forKey: pushedKey)?.contains(hash.lowercased()) ?? false
     }
 }
