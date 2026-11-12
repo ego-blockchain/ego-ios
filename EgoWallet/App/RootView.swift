@@ -481,6 +481,7 @@ enum DemoFlow {
         case "lock": LockView()
         case "scene": VStack { Spacer(); ConnectionScene(); Spacer() }.background(Brand.ink)
         case "market": NavigationStack { MarketView() }
+        case "postoffer": NavigationStack { PostOfferView(egocUsd: 0.25, side: .sell) }
         case "earnings": DemoPush { EarningsView() }
         case "tabs": MainTabs()
         case "filedetail":

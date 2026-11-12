@@ -20,6 +20,8 @@ struct MarketView: View {
     @MainActor private static var lastOffers: [String: [OfferListing]] = [:]
     @State private var problem: String?
     @State private var loadingMore = false
+    /// The kind of offer being posted, while the form is open.
+    @State private var posting: MarketSide?
 
     /// Fetches the market's numbers before the tab is first opened, so it arrives ready.
     @MainActor static func warmUp(_ app: AppModel) async {
@@ -58,12 +60,21 @@ struct MarketView: View {
                         filters
                         if let problem { ProblemBanner(text: problem) }
                         book
+                        if params?.active != false {
+                            // Taking sell offers is buying, so the Buy side posts a buy offer.
+                            Button {
+                                posting = takerSide
+                            } label: {
+                                Label("Post your own \(takerSide == .buy ? "buy" : "sell") offer", systemImage: "plus.circle.fill")
+                            }
+                            .buttonStyle(OutlineButtonStyle(tint: sideColor))
+                        }
                         // Below the offers, so the page doesn't jump when the market's state arrives.
                         if let params, !params.active {
                             NoteCard(text: "The P2P market isn't switched on for this network yet. You can look around; posting offers and trading open when the network activates it.",
                                      icon: "clock.fill", tint: Brand.amber)
                         }
-                        NoteCard(text: "P2P Trade is in beta and its escrows are not audited yet, so start with small amounts. The coins wait in escrow until the seller confirms the payment, and an arbiter chosen by the DAO settles disputes. To trade, open P2P Trade in Ego Desktop with the same wallet.",
+                        NoteCard(text: "P2P Trade is in beta and its escrows are not audited yet, so start with small amounts. The coins wait in escrow until the seller confirms the payment, and an arbiter chosen by the DAO settles disputes. You can post EGOC offers here; to take an offer and trade, open P2P Trade in Ego Desktop with the same wallet.",
                                  icon: "lock.shield.fill", tint: Brand.amber)
                     }
                     .padding(16)
@@ -72,6 +83,10 @@ struct MarketView: View {
                 .refreshable { await load() }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .sheet(item: $posting, onDismiss: { Task { await load() } }) { side in
+                NavigationStack { PostOfferView(egocUsd: egocUsd, side: side) }
+                    .presentationBackground(Brand.ink)
+            }
             .task(id: reloadKey) {
                 // Coming back to the tab keeps the offers on screen and refreshes them quietly;
                 // only a change of filter clears the list.
@@ -527,9 +542,26 @@ struct OfferPlaceholder: View {
 }
 
 struct OfferDetailView: View {
+    @EnvironmentObject private var app: AppModel
     let listing: OfferListing
     let egocUsd: Double
     let mine: Bool
+    @State private var confirmClose = false
+    @State private var closing = false
+    @State private var closeProblem: String?
+    @State private var closedHash: String?
+
+    private func close() async {
+        closing = true
+        closeProblem = nil
+        defer { closing = false }
+        do {
+            closedHash = try await app.marketOperation(MarketOps.closeOffer, MarketOps.OfferRef(offerId: listing.offer.id))
+            Haptics.success()
+        } catch {
+            closeProblem = app.message(for: error)
+        }
+    }
 
     var body: some View {
         let offer = listing.offer
@@ -602,10 +634,29 @@ struct OfferDetailView: View {
             if profile.disputesLost > 0 {
                 NoteCard(text: "Lost \(profile.disputesLost) dispute\(profile.disputesLost == 1 ? "" : "s").", icon: "exclamationmark.triangle.fill", tint: Brand.danger)
             }
-            NoteCard(text: mine
-                     ? "This is your offer. Manage it in Ego Desktop."
-                     : "To \(buying ? "buy from" : "sell to") this trader, open P2P Trade in Ego Desktop with the same wallet.",
-                     icon: "desktopcomputer", tint: Brand.amber)
+            if mine {
+                if let closedHash {
+                    NoteCard(text: "Closing the offer. It leaves the list once the network confirms it.", icon: "checkmark.circle.fill", tint: Brand.mint)
+                    HashCard(hash: closedHash, explorer: EgoScan.tx(closedHash))
+                } else {
+                    if let closeProblem { ProblemBanner(text: closeProblem) }
+                    Button(role: .destructive) {
+                        confirmClose = true
+                    } label: {
+                        if closing { ProgressView() } else { Label("Close offer", systemImage: "xmark.circle") }
+                    }
+                    .buttonStyle(OutlineButtonStyle(tint: Brand.danger))
+                    .disabled(closing)
+                }
+            } else {
+                NoteCard(text: "To \(buying ? "buy from" : "sell to") this trader, open P2P Trade in Ego Desktop with the same wallet.",
+                         icon: "desktopcomputer", tint: Brand.amber)
+            }
+        }
+        .confirmationDialog("Close this offer?", isPresented: $confirmClose, titleVisibility: .visible) {
+            Button("Close offer", role: .destructive) { Task { await close() } }
+        } message: {
+            Text("It leaves P2P Trade. Trades already open on it carry on.")
         }
         .navigationTitle(buying ? "Buy \(meta.symbol)" : "Sell \(meta.symbol)")
         .navigationBarTitleDisplayMode(.inline)
