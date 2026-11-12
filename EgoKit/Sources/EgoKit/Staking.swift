@@ -42,6 +42,8 @@ public enum Staking {
         public let canUnstake: Bool
         public let networkStake: UInt64
         public let lockOptions: [LockOption]
+        public let budgetLive: Bool?
+        public let activityMilli: UInt64?
 
         enum CodingKeys: String, CodingKey {
             case staked, locked, apr, accrued
@@ -53,7 +55,11 @@ public enum Staking {
             case canUnstake = "can_unstake"
             case networkStake = "network_stake"
             case lockOptions = "lock_options"
+            case budgetLive = "budget_live"
+            case activityMilli = "activity_milli"
         }
+
+        public var activityBoost: Double { Double(activityMilli ?? 1_000) / 1_000 }
 
         /// This stake's share of all stake on the network, 0...1.
         public var share: Double { networkStake > 0 ? Double(staked) / Double(networkStake) : 0 }

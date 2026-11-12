@@ -94,6 +94,11 @@ struct StakingView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], spacing: 8) {
                     ForEach(s.lockOptions, id: \.days) { o in lockChip(o.days, o.apr) }
                 }
+                Text(s.budgetLive == true
+                     ? "Staking pays from a fixed budget that lasts 120 years. Rates never go above today's, and they fall when more people stake. Running an online node and sharing storage raise your share\(s.activityBoost > 1 ? ": yours counts \(s.activityBoost.formatted(.number.precision(.fractionLength(0...1))))×" : "")."
+                     : "Rates never go above today's. Once the new staking budget starts they can fall when more people stake, and running an online node or sharing storage raises your share.")
+                    .font(.caption)
+                    .foregroundStyle(Brand.muted)
             }
             if s.staked > 0 {
                 NoteCard(text: "Adding to a stake starts its lock and its reward again from today, so the \(Amount.format(s.accrued)) EGOC reward so far is not paid. Unstake first to collect it.",

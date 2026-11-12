@@ -267,7 +267,15 @@ public enum MarketAssets {
         .init(id: "USDT-SPL", symbol: "USDT", chain: "Solana", digits: 2),
         .init(id: "SOL", symbol: "SOL", chain: "Solana", digits: 4),
         .init(id: "ADA", symbol: "ADA", chain: "Cardano", digits: 2),
+        .init(id: "BTC", symbol: "BTC", chain: "Bitcoin", digits: 6),
+        .init(id: "DOGE", symbol: "DOGE", chain: "Dogecoin", digits: 2),
+        .init(id: "XRP", symbol: "XRP", chain: "XRP Ledger", digits: 2),
     ]
+
+    public static func ordered(ready: [String]?) -> [MarketAsset] {
+        guard let ready else { return all }
+        return all.filter { ready.contains($0.id) } + all.filter { !ready.contains($0.id) }
+    }
 
     public static func meta(_ id: String) -> MarketAsset {
         all.first { $0.id == id } ?? MarketAsset(id: id, symbol: id, chain: id, digits: 2)
@@ -295,11 +303,13 @@ public struct MarketParams: Decodable, Equatable, Sendable {
     public let active: Bool
     public let escrowHeldUegoc: UInt64
     public let activeTrades: UInt64
+    public let readyAssets: [String]?
 
     enum CodingKeys: String, CodingKey {
         case active
         case escrowHeldUegoc = "escrow_held_uegoc"
         case activeTrades = "active_trades"
+        case readyAssets = "ready_assets"
     }
 
     public init(from decoder: Decoder) throws {
@@ -307,6 +317,12 @@ public struct MarketParams: Decodable, Equatable, Sendable {
         active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? false
         escrowHeldUegoc = try c.decodeIfPresent(UInt64.self, forKey: .escrowHeldUegoc) ?? 0
         activeTrades = try c.decodeIfPresent(UInt64.self, forKey: .activeTrades) ?? 0
+        readyAssets = try c.decodeIfPresent([String].self, forKey: .readyAssets)
+    }
+
+    public func isComingSoon(_ asset: String) -> Bool {
+        guard let readyAssets else { return false }
+        return !readyAssets.contains(asset)
     }
 }
 

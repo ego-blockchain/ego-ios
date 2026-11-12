@@ -132,7 +132,7 @@ private struct ProposalRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Tag(text: proposal.kind.capitalized, tint: Brand.sky)
+                Tag(text: proposal.kindLabel, tint: Brand.sky)
                 if proposal.hasKnowledgeTest { Tag(text: "Knowledge test", tint: Brand.violet) }
                 if mine { Tag(text: "Yours", tint: Brand.amber) }
                 Spacer(minLength: 0)
@@ -235,13 +235,26 @@ struct ProposalView: View {
     private func header(_ p: Dao.Proposal) -> some View {
         GlassCard {
             HStack(spacing: 6) {
-                Tag(text: p.kind.capitalized, tint: Brand.sky)
+                Tag(text: p.kindLabel, tint: Brand.sky)
                 Tag(text: p.isActive ? "Open" : p.status.capitalized, tint: p.isActive ? Brand.lime : Brand.muted)
                 if p.hasKnowledgeTest { Tag(text: "Knowledge test", tint: Brand.violet) }
             }
             Text(p.title)
                 .font(.system(.title2, design: .rounded, weight: .heavy))
                 .foregroundStyle(Brand.text)
+            if p.isArbiterVote, let target = p.target, !target.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(p.kind == "arbiter_add" ? "Address that would become a P2P arbiter" : "Arbiter address that would be removed")
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    Text(target)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Brand.text)
+                        .textSelection(.enabled)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
             Text(p.description).font(.subheadline).foregroundStyle(Brand.text.opacity(0.85))
             HStack(spacing: 14) {
                 Label(p.isActive ? "Ends \(date(p.endsAt))" : "Ended \(date(p.endsAt))", systemImage: "clock")

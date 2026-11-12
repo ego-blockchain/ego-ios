@@ -63,7 +63,7 @@ struct MarketView: View {
                             NoteCard(text: "The P2P market isn't switched on for this network yet. You can look around; posting offers and trading open when the network activates it.",
                                      icon: "clock.fill", tint: Brand.amber)
                         }
-                        NoteCard(text: "The coins wait in escrow until the seller confirms the payment, and an arbiter settles disputes. To trade, open P2P Trade in Ego Desktop with the same wallet.",
+                        NoteCard(text: "P2P Trade is in beta and its escrows are not audited yet, so start with small amounts. The coins wait in escrow until the seller confirms the payment, and an arbiter chosen by the DAO settles disputes. To trade, open P2P Trade in Ego Desktop with the same wallet.",
                                  icon: "lock.shield.fill", tint: Brand.amber)
                     }
                     .padding(16)
@@ -99,8 +99,8 @@ struct MarketView: View {
         GlassField(label: takerSide == .buy ? "I want to buy" : "I want to sell", icon: "slider.horizontal.3") {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(MarketAssets.all) { a in
-                        AssetChip(asset: a, on: a.id == asset, tint: sideColor) {
+                    ForEach(MarketAssets.ordered(ready: params?.readyAssets)) { a in
+                        AssetChip(asset: a, on: a.id == asset, tint: sideColor, soon: params?.isComingSoon(a.id) == true) {
                             withAnimation(.spring(response: 0.3)) { asset = a.id }
                             Haptics.tap()
                         }
@@ -133,8 +133,12 @@ struct MarketView: View {
                     .foregroundStyle(Brand.muted)
             }
             .glassInput()
-            if meta.group != .ego {
-                Text("\(meta.symbol) trades settle on \(meta.chain): the seller locks the coins in the Ego escrow contract there, and they go to the buyer only when the seller confirms the payment or an arbiter decides.")
+            if params?.isComingSoon(asset) == true {
+                Text("\(meta.label) trading is coming soon. You can look at offers, but trades in it open once its escrow is set up.")
+                    .font(.caption)
+                    .foregroundStyle(Brand.warning)
+            } else if meta.group != .ego {
+                Text("\(meta.symbol) trades settle on \(meta.chain): the seller locks the coins in an escrow there, and they go to the buyer only when the seller confirms the payment or an arbiter decides.")
                     .font(.caption)
                     .foregroundStyle(Brand.muted)
             }
@@ -260,6 +264,12 @@ struct MarketHero: View {
                 Text(params.map { $0.active ? "Market live" : "Not live yet" } ?? "Connecting…")
                     .font(.system(.caption, design: .rounded, weight: .heavy))
                     .foregroundStyle(live ? Brand.emerald : Brand.amber)
+                Text("BETA")
+                    .font(.system(size: 10, weight: .heavy, design: .rounded))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .foregroundStyle(Brand.amber)
+                    .overlay(Capsule().stroke(Brand.amber.opacity(0.6)))
                 Spacer()
                 Image(systemName: "arrow.left.arrow.right")
                     .font(.system(size: 13, weight: .bold))
@@ -351,6 +361,7 @@ struct AssetChip: View {
     let asset: MarketAsset
     let on: Bool
     let tint: Color
+    var soon = false
     let action: () -> Void
 
     var body: some View {
@@ -363,6 +374,11 @@ struct AssetChip: View {
                         .font(.system(size: 9, weight: .bold, design: .rounded))
                         .opacity(0.7)
                 }
+                if soon {
+                    Text("Soon")
+                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                        .foregroundStyle(on ? Brand.ink : Brand.warning)
+                }
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 40)
@@ -371,7 +387,7 @@ struct AssetChip: View {
             .foregroundStyle(on ? Brand.ink : Brand.text)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(asset.label)
+        .accessibilityLabel(soon ? "\(asset.label), coming soon" : asset.label)
         .accessibilityAddTraits(on ? .isSelected : [])
     }
 }

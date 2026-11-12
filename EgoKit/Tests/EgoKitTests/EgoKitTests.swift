@@ -188,7 +188,11 @@ final class MarketModelTests: XCTestCase {
     }
 
     func testTheAssetListMatchesEgoDesktop() {
-        XCTAssertEqual(MarketAssets.all.count, 16)
+        XCTAssertEqual(MarketAssets.all.count, 19)
+        XCTAssertEqual(MarketAssets.meta("XRP").label, "XRP on XRP Ledger")
+        XCTAssertEqual(MarketAssets.meta("BTC").digits, 6)
+        XCTAssertEqual(MarketAssets.ordered(ready: ["EGOC", "ADA"]).map(\.id).prefix(2), ["EGOC", "ADA"])
+        XCTAssertEqual(MarketAssets.ordered(ready: nil).count, 19)
         XCTAssertEqual(MarketAssets.all.first?.id, "EGOC")
         XCTAssertEqual(MarketAssets.meta("USDT-TRC20").label, "USDT on Tron · TRC-20")
         XCTAssertEqual(MarketAssets.meta("EGOC").label, "EGOC")
@@ -209,6 +213,15 @@ final class MarketModelTests: XCTestCase {
         XCTAssertNil(try offer(asset: "EGOC", fiat: "EUR", price: #"{"margin_bps":100}"#).unitPriceMicro(egocUsd: 0.5))
         XCTAssertNil(try offer(asset: "ETH", fiat: "USD", price: #"{"margin_bps":100}"#).unitPriceMicro(egocUsd: 0.5))
         XCTAssertEqual(try offer(asset: "ETH", fiat: "EUR", price: #"{"fixed":2400000000}"#).unitPriceMicro(egocUsd: 0.5), 2_400_000_000)
+    }
+
+    func testMarketParamsKnowWhichCoinsAreComingSoon() throws {
+        let newer = try JSONDecoder().decode(MarketParams.self, from: Data(#"{"active":true,"ready_assets":["EGOC","ADA","BTC"]}"#.utf8))
+        XCTAssertFalse(newer.isComingSoon("BTC"))
+        XCTAssertTrue(newer.isComingSoon("ETH"))
+        let older = try JSONDecoder().decode(MarketParams.self, from: Data(#"{"active":true}"#.utf8))
+        XCTAssertNil(older.readyAssets)
+        XCTAssertFalse(older.isComingSoon("ETH"))
     }
 
     func testMarketParamsDecodeFromTheGateway() throws {

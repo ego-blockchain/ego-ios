@@ -178,9 +178,10 @@ public enum Dao {
         public let myKnowledgeVote: Int?
         public let myTestScore: Double?
         public let answersRevealed: Bool
+        public let target: String?
 
         enum CodingKeys: String, CodingKey {
-            case id, title, description, options, creator, status, questions
+            case id, title, description, options, creator, status, questions, target
             case kind = "proposal_type"
             case createdAt = "created_at"
             case endsAt = "voting_ends_at"
@@ -196,6 +197,16 @@ public enum Dao {
 
         public var isActive: Bool { status == "active" }
         public var hasVoted: Bool { myStakeVote != nil || myKnowledgeVote != nil }
+
+        public var isArbiterVote: Bool { kind == "arbiter_add" || kind == "arbiter_remove" }
+
+        public var kindLabel: String {
+            switch kind {
+            case "arbiter_add": return "Add P2P arbiter"
+            case "arbiter_remove": return "Remove P2P arbiter"
+            default: return kind.capitalized
+            }
+        }
     }
 
     public struct OptionResult: Decodable, Equatable, Sendable {
